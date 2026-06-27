@@ -56,5 +56,7 @@ is the easiest module to get an operator to install.
 ## Dependencies
 
 Modules run inside the AgeniusDesk Python environment. Prefer the standard
-library plus what AgeniusDesk already ships (`httpx`, `fastapi`, `pydantic`).
-Avoid extra PyPI dependencies; AgeniusDesk does not pip-install per-module.
+library plus what AgeniusDesk already ships: `httpx`, `fastapi`, `pydantic`, and
+`yt-dlp` (provided for media/transcript modules). Avoid other extra PyPI
+dependencies; AgeniusDesk does not pip-install per-module, so an unmet import
+makes the module fail to load.

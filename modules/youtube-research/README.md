@@ -7,9 +7,11 @@ existing topic folders, with tags in the frontmatter.
 
 ## What it does
 
-1. **Transcribe (captions-only).** Fetches the video's caption track directly
-   from YouTube over HTTP. No GPU, no whisper, no sidecar. The video must have
-   captions or subtitles; videos with captions disabled are not supported in v1.
+1. **Transcribe (captions-only).** Uses yt-dlp in-process to pull the video's
+   caption track (manual subtitles first, then auto-generated), preferring the
+   json3 format. No GPU, no whisper, no sidecar. yt-dlp is provided by the
+   AgeniusDesk runtime. The video must have captions or subtitles; videos with
+   captions disabled are not supported in v1.
 2. **Break down.** Sends the transcript to your configured AgeniusDesk AI
    provider (the same one the Assistant uses) and gets back a dense markdown
    breakdown: TL;DR, key concepts, how it works, concrete details, how to apply.
