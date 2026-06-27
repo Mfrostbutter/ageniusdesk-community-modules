@@ -15,6 +15,7 @@ let _jobs = [];
 let _selectedId = null;
 let _detailTab = 'breakdown';
 let _savedProvider = '';
+let _savedModel = '';
 let _marked = null;
 let _poll = null;
 
@@ -79,7 +80,10 @@ async function loadModels() {
   sel.innerHTML = '<option value="">Loading…</option>';
   let models = [];
   try { models = (await jget(`/api/assistant/models?provider=${encodeURIComponent(activeProvider())}`)).models || []; } catch { /* keep default */ }
-  const opts = ['<option value="">Default model</option>'];
+  // Disclose the resolved default model when the saved provider is active.
+  const onSavedProvider = !($('ytr-provider')?.value);
+  const defLabel = onSavedProvider && _savedModel ? `Default model (${_savedModel})` : 'Default model';
+  const opts = [`<option value="">${esc(defLabel)}</option>`];
   for (const m of models) {
     const id = typeof m === 'string' ? m : (m.id || m.name || '');
     const label = typeof m === 'string' ? m : (m.label || m.name || m.id || '');
@@ -88,7 +92,15 @@ async function loadModels() {
   sel.innerHTML = opts.join('');
 }
 async function initProviderModel() {
-  try { _savedProvider = (await jget('/api/assistant/config')).provider || 'anthropic'; } catch { _savedProvider = 'anthropic'; }
+  try {
+    const cfg = await jget('/api/assistant/config');
+    _savedProvider = cfg.provider || 'anthropic';
+    _savedModel = cfg.model || '';
+  } catch { _savedProvider = 'anthropic'; }
+  // Disclose the resolved default provider in the picker so operators know which
+  // provider/model will write the breakdown on a plain Run.
+  const provSel = $('ytr-provider');
+  if (provSel && provSel.options[0]) provSel.options[0].textContent = `Default provider (${_savedProvider})`;
   await loadModels();
 }
 async function loadDestinations() {
