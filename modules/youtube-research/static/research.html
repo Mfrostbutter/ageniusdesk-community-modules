@@ -15,7 +15,17 @@
       <button type="button" class="ytr-depth" data-depth="deep" style="cursor:pointer;padding:6px 12px;border:none;border-radius:5px;font-size:12px;font-weight:600;background:transparent;color:var(--text-secondary)">Deep dive</button>
     </div>
 
-    <span id="ytr-modelinfo" title="The AI provider and model that writes the breakdown (set in Settings > AI)" style="font-size:12px;color:var(--text-muted);align-self:center;white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis"></span>
+    <select id="ytr-provider" class="input" title="AI provider that writes the breakdown" style="max-width:150px">
+      <option value="">provider</option>
+      <option value="anthropic">Anthropic</option>
+      <option value="openai">OpenAI</option>
+      <option value="openrouter">OpenRouter</option>
+      <option value="ollama">Ollama</option>
+    </select>
+
+    <select id="ytr-model" class="input" title="Model that writes the breakdown" style="max-width:230px">
+      <option value="">model</option>
+    </select>
 
     <input id="ytr-dest" class="input" list="ytr-dest-list" placeholder="auto-classify (or pick a folder)" title="Research topic folder. Blank = auto-classify into the best-fit folder." style="max-width:220px">
     <datalist id="ytr-dest-list"></datalist>

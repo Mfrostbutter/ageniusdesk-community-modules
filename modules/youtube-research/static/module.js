@@ -14,6 +14,8 @@ const CDN = 'https://esm.sh';
 let _jobs = [];
 let _selectedId = null;
 let _detailTab = 'breakdown';
+let _savedProvider = '';
+let _savedModel = '';
 let _marked = null;
 let _poll = null;
 
@@ -63,19 +65,48 @@ function fmtWhen(iso) { if (!iso) return ''; try { return new Date(iso.replace('
 
 function inflight() { return _jobs.some(j => ['queued', 'transcribing', 'analyzing', 'deepdiving'].includes(j.status)); }
 
-// ── Model info (read-only: which provider + model writes the breakdown) ───────
+// ── Provider + model switcher ─────────────────────────────────────────────────
+// The default option shows the actual configured provider/model (no "Default
+// provider/model" wording); other options switch it for this run. The value sent
+// to the backend is encoded by encodeModel().
 
-async function showModelInfo() {
-  let provider = '', model = '';
+function activeProvider() { return ($('ytr-provider')?.value || '') || _savedProvider; }
+
+function encodeModel() {
+  const pv = $('ytr-provider')?.value || '';
+  const mv = $('ytr-model')?.value || '';
+  if (!pv) return mv;            // saved provider; '' = its default model
+  return `${pv}::${mv}`;          // explicit provider, optional model
+}
+
+async function loadModels() {
+  const sel = $('ytr-model');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">…</option>';
+  let models = [];
+  try { models = (await jget(`/api/assistant/models?provider=${encodeURIComponent(activeProvider())}`)).models || []; } catch { /* keep default */ }
+  // Default option shows the actual model name when on the saved provider.
+  const onSaved = !($('ytr-provider')?.value);
+  const defText = onSaved && _savedModel ? _savedModel : 'model';
+  const opts = [`<option value="">${esc(defText)}</option>`];
+  for (const m of models) {
+    const id = typeof m === 'string' ? m : (m.id || m.name || '');
+    const label = typeof m === 'string' ? m : (m.label || m.name || m.id || '');
+    if (id) opts.push(`<option value="${esc(id)}">${esc(label)}</option>`);
+  }
+  sel.innerHTML = opts.join('');
+}
+
+async function initProviderModel() {
   try {
     const cfg = await jget('/api/assistant/config');
-    provider = cfg.provider || '';
-    model = cfg.model || '';
-  } catch { /* leave blank */ }
-  const el = $('ytr-modelinfo');
-  if (!el) return;
-  el.textContent = (provider || model) ? `${provider}${model ? ' · ' + model : ''}` : '';
-  el.title = `Breakdown model (change in Settings > AI): ${provider}${model ? ' / ' + model : ''}`;
+    _savedProvider = cfg.provider || 'anthropic';
+    _savedModel = cfg.model || '';
+  } catch { _savedProvider = 'anthropic'; }
+  // Default provider option shows the actual provider name (no "Default provider").
+  const provSel = $('ytr-provider');
+  if (provSel && provSel.options[0]) provSel.options[0].textContent = _savedProvider;
+  await loadModels();
 }
 async function loadDestinations() {
   const dl = $('ytr-dest-list');
@@ -186,7 +217,7 @@ async function runJob() {
   const btn = $('ytr-run');
   if (btn) { btn.disabled = true; btn.textContent = 'Starting...'; }
   try {
-    const job = await jpost(`${API}/jobs`, { url, depth, destination: ($('ytr-dest')?.value || '').trim(), model: '' });
+    const job = await jpost(`${API}/jobs`, { url, depth, destination: ($('ytr-dest')?.value || '').trim(), model: encodeModel() });
     if (urlEl) urlEl.value = '';
     _jobs.unshift(job);
     await selectJob(job.id);
@@ -241,7 +272,7 @@ document.addEventListener('click', async (e) => {
 
   if (t.closest('#ytr-deepdive')) {
     const id = _selectedId;
-    try { await jpost(`${API}/jobs/${id}/deepdive`, { model: '' }); window.AgeniusDesk?.notify('Deep dive started.'); startPolling(); }
+    try { await jpost(`${API}/jobs/${id}/deepdive`, { model: encodeModel() }); window.AgeniusDesk?.notify('Deep dive started.'); startPolling(); }
     catch (err) { window.AgeniusDesk?.notify(err.message, 'error'); }
     return;
   }
@@ -265,9 +296,12 @@ document.addEventListener('click', async (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.target instanceof Element && e.target.id === 'ytr-url') { e.preventDefault(); runJob(); }
 });
+document.addEventListener('change', (e) => {
+  if (e.target instanceof Element && e.target.id === 'ytr-provider') loadModels();
+});
 
 async function mount() {
-  await showModelInfo();
+  await initProviderModel();
   await loadDestinations();
   await loadJobs();
   if (inflight()) startPolling();
