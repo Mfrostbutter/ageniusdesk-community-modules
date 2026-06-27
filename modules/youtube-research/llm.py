@@ -30,12 +30,31 @@ class LLMError(RuntimeError):
 
 
 def _config() -> dict:
-    """Resolve the saved assistant provider config from the host app."""
+    """Resolve the saved assistant provider config from the host app.
+
+    When the global assistant has no stored key (operators commonly set the key
+    as a per-area $REF in Models instead), fall back to the conventional
+    provider secret ($OPEN_ROUTER_KEY / $OPEN_AI_KEY / $ANTHROPIC_KEY), the same
+    convention the assistant's own per-area resolution uses.
+    """
     try:
         from backend.modules.assistant.providers import get_assistant_config
     except Exception as e:  # pragma: no cover - host without the assistant module
         raise LLMError(f"AgeniusDesk assistant config is unavailable: {e}") from e
-    return get_assistant_config()
+    cfg = dict(get_assistant_config())
+    provider = cfg.get("provider", "")
+    if provider != "ollama" and not cfg.get("api_key"):
+        try:
+            from backend.config import decrypt_value
+            from backend.modules.assistant.providers import PROVIDER_KEY_MAP
+            name = PROVIDER_KEY_MAP.get(provider)
+            if name:
+                resolved = decrypt_value(f"${name}")
+                if resolved and resolved != name:
+                    cfg["api_key"] = resolved
+        except Exception:  # pragma: no cover - fall through to the empty-key error
+            pass
+    return cfg
 
 
 def _parse_supported_max(body: str) -> int | None:

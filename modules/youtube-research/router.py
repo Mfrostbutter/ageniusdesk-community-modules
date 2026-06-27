@@ -1,14 +1,22 @@
 """FastAPI routes for the YouTube Research module.
 
-  POST   /api/youtube-research/jobs        create + start a job {url, model?}
-  GET    /api/youtube-research/jobs        list recent jobs
-  GET    /api/youtube-research/jobs/{id}   one job (with breakdown)
-  DELETE /api/youtube-research/jobs/{id}   forget a job
-  GET    /api/youtube-research/topics      current research-vault topic folders
+Mirrors the main app's research surface so the view + output match, but writes
+into the containerized notes vault (see artifacts.py):
+
+  GET    /api/youtube-research/config              UI bootstrap (default engine)
+  GET    /api/youtube-research/folders?path=       folder picker: subfolders
+  POST   /api/youtube-research/folders             folder picker: create folder
+  POST   /api/youtube-research/jobs                create + start {url, depth, destination, model}
+  GET    /api/youtube-research/jobs                list recent jobs (no big blobs)
+  GET    /api/youtube-research/jobs/{id}           full job (transcript + breakdown)
+  POST   /api/youtube-research/jobs/{id}/deepdive  run the deep dive
+  POST   /api/youtube-research/jobs/{id}/move      move the artifact folder
+  DELETE /api/youtube-research/jobs/{id}           forget a job
+  GET    /api/youtube-research/jobs/{id}/artifact?kind=breakdown|deep|transcript
 
 Jobs are tracked in memory and run as fire-and-forget asyncio tasks; the durable
-artifact is the filed note in the vault, so jobs are transient progress trackers.
-Routes are gated by the host auth (require_trusted_request).
+artifacts (transcript.md, BREAKDOWN.md, BREAKDOWN-deep.md, meta.json) live in the
+vault, so a restart loses the in-memory list but never the knowledge.
 """
 
 from __future__ import annotations
@@ -21,10 +29,11 @@ from datetime import datetime, timezone
 from typing import Any
 
 from backend.auth_gate import require_trusted_request
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
-from . import captions, filing
+from . import artifacts, captions, deepdive
 from .llm import LLMError, complete
 from .prompts import SINGLE_PASS_SYSTEM, single_pass_prompt
 
@@ -36,17 +45,19 @@ router = APIRouter(
     dependencies=[Depends(require_trusted_request)],
 )
 
-# In-memory job registry, newest last; capped so a long session does not grow
-# without bound. Jobs are ephemeral; filed notes are the durable record.
 _JOBS: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
 _MAX_JOBS = 100
-
-# Fields omitted from list responses (the big text blob).
-_LIST_OMIT = ("breakdown_md",)
+_LIST_OMIT = ("breakdown_md", "deepdive_md", "transcript_text")
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _public(job: dict[str, Any], *, full: bool = True) -> dict[str, Any]:
+    if full:
+        return dict(job)
+    return {k: v for k, v in job.items() if k not in _LIST_OMIT}
 
 
 def _set(job_id: str, **fields: Any) -> dict[str, Any] | None:
@@ -60,31 +71,52 @@ def _set(job_id: str, **fields: Any) -> dict[str, Any] | None:
 
 
 def _broadcast(job: dict[str, Any]) -> None:
-    """Best-effort live update over the host WebSocket; the UI also polls."""
     try:
         from backend.websocket import manager
 
-        asyncio.create_task(manager.broadcast("youtube-research:job", _public(job)))
+        asyncio.create_task(manager.broadcast("youtube-research:job", _public(job, full=False)))
     except Exception as e:  # pragma: no cover - ws is a nicety
         logger.debug("youtube-research broadcast failed: %s", e)
 
 
-def _public(job: dict[str, Any], *, full: bool = True) -> dict[str, Any]:
-    if full:
-        return dict(job)
-    return {k: v for k, v in job.items() if k not in _LIST_OMIT}
+# ── Config + folder picker ───────────────────────────────────────────────────
+
+
+@router.get("/config")
+async def get_config():
+    # v1 is captions-only (yt-dlp in-process; no GPU, no sidecar).
+    return {"default_engine": "captions", "engines": ["captions"]}
+
+
+@router.get("/folders")
+async def list_folders(path: str = Query(default="")):
+    artifacts.ensure_taxonomy()
+    rel = artifacts.sanitize_destination(path)
+    return {"path": rel, "folders": artifacts.list_folders(rel)}
+
+
+class CreateFolder(BaseModel):
+    path: str = Field(..., description="Relative folder path under the research root.")
+
+
+@router.post("/folders")
+async def create_folder(req: CreateFolder):
+    try:
+        created = artifacts.make_folder(req.path)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"path": created}
+
+
+# ── Jobs ─────────────────────────────────────────────────────────────────────
 
 
 class CreateJob(BaseModel):
     url: str = Field(..., description="YouTube URL or 11-char video id.")
-    model: str = Field(default="", description="Optional LLM model id override for this run.")
-
-
-@router.get("/topics")
-async def list_topics():
-    """The current research-vault topic folders (classifier candidate set)."""
-    filing.ensure_taxonomy()
-    return {"topics": filing.list_topics()}
+    depth: str = Field(default="single", description="'single' or 'deep'.")
+    engine: str = Field(default="captions", description="captions-only in v1.")
+    destination: str = Field(default="", description="Topic subfolder under research/ (blank = _inbox).")
+    model: str = Field(default="", description="Optional LLM model override for this run.")
 
 
 @router.post("/jobs")
@@ -92,22 +124,28 @@ async def create_job(req: CreateJob):
     video_id = captions.parse_video_id(req.url)
     if not video_id:
         raise HTTPException(status_code=400, detail="Could not parse a YouTube video id from that input.")
+    if req.depth not in ("single", "deep"):
+        raise HTTPException(status_code=400, detail="depth must be 'single' or 'deep'.")
     job_id = uuid.uuid4().hex[:16]
     job = {
         "id": job_id,
         "url": req.url.strip(),
         "video_id": video_id,
+        "depth": req.depth,
+        "engine": "captions",
+        "engine_used": "",
+        "destination": artifacts.sanitize_destination(req.destination),
         "model": req.model.strip(),
         "title": "",
         "channel": "",
+        "duration_seconds": None,
         "status": "queued",
         "progress": "Queued",
         "error": "",
         "breakdown_md": "",
-        "filed_path": "",
-        "topic": "",
-        "tags": [],
-        "confidence": 0.0,
+        "deepdive_md": "",
+        "transcript_text": "",
+        "artifact_dir": "",
         "created_at": _now(),
         "updated_at": _now(),
     }
@@ -119,8 +157,9 @@ async def create_job(req: CreateJob):
 
 
 @router.get("/jobs")
-async def list_jobs():
-    return {"jobs": [_public(j, full=False) for j in reversed(_JOBS.values())]}
+async def list_jobs(limit: int = 100):
+    jobs = list(reversed(_JOBS.values()))[: max(1, min(limit, 500))]
+    return {"jobs": [_public(j, full=False) for j in jobs]}
 
 
 @router.get("/jobs/{job_id}")
@@ -131,6 +170,48 @@ async def get_job(job_id: str):
     return _public(job)
 
 
+class DeepdiveReq(BaseModel):
+    model: str = Field(default="", description="Optional model override for this deep dive.")
+
+
+@router.post("/jobs/{job_id}/deepdive")
+async def deepdive_job(job_id: str, req: DeepdiveReq | None = None):
+    job = _JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    if not job.get("transcript_text"):
+        raise HTTPException(status_code=409, detail="Job has no transcript yet.")
+    if job.get("status") == "deepdiving":
+        raise HTTPException(status_code=409, detail="Deep dive already running.")
+    model = (req.model.strip() if req else "") or job.get("model") or ""
+    if model:
+        job["model"] = model
+    asyncio.create_task(_run_deepdive(job_id))
+    return {"ok": True, "job_id": job_id}
+
+
+class MoveReq(BaseModel):
+    destination: str = Field(default="", description="New topic folder under research/ (blank = _inbox).")
+
+
+@router.post("/jobs/{job_id}/move")
+async def move_job(job_id: str, req: MoveReq):
+    job = _JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    if not job.get("artifact_dir"):
+        raise HTTPException(status_code=409, detail="This job has no saved artifacts to move.")
+    destination = artifacts.sanitize_destination(req.destination)
+    try:
+        new_dir = await artifacts.move_artifact(job["artifact_dir"], destination)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Move failed: {e}")
+    updated = _set(job_id, artifact_dir=new_dir, destination=destination)
+    return {"ok": True, "artifact_dir": new_dir, "destination": destination, "job": _public(updated)}
+
+
 @router.delete("/jobs/{job_id}")
 async def delete_job(job_id: str):
     if _JOBS.pop(job_id, None) is None:
@@ -138,68 +219,127 @@ async def delete_job(job_id: str):
     return {"ok": True}
 
 
+@router.get("/jobs/{job_id}/artifact", response_class=PlainTextResponse)
+async def download_artifact(job_id: str, kind: str = Query(default="breakdown")):
+    job = _JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    field = {"breakdown": "breakdown_md", "deep": "deepdive_md", "transcript": "transcript_text"}.get(kind)
+    if not field:
+        raise HTTPException(status_code=400, detail="kind must be breakdown, deep, or transcript.")
+    content = job.get(field) or ""
+    if not content:
+        raise HTTPException(status_code=404, detail=f"No {kind} content for this job.")
+    slug = (job.get("title") or job_id)[:40].replace("/", "-")
+    return PlainTextResponse(
+        content,
+        headers={"Content-Disposition": f'attachment; filename="{slug}-{kind}.md"'},
+        media_type="text/markdown",
+    )
+
+
+# ── Pipeline ─────────────────────────────────────────────────────────────────
+
+
 async def _run_job(job_id: str) -> None:
-    """Transcribe -> breakdown -> file. Never raises; records errors on the job."""
+    """Transcribe -> breakdown -> write to vault. Never raises."""
     try:
         job = _JOBS.get(job_id)
         if not job:
             return
         model = job.get("model") or ""
+        depth = job.get("depth") or "single"
 
-        # 1) Transcribe from captions.
         _set(job_id, status="transcribing", progress="Fetching captions")
         try:
             rec = await captions.fetch_transcript(job["video_id"])
         except captions.CaptionsError as e:
-            _set(job_id, status="error", error=str(e))
+            _set(job_id, status="error", engine_used="captions", error=str(e))
             return
 
-        meta = {
-            "video_id": rec["video_id"],
-            "title": rec.get("title") or "",
-            "channel": rec.get("channel") or "",
-            "url": rec.get("url") or job["url"],
-            "language": rec.get("language") or "",
-        }
-        _set(job_id, status="analyzing", title=meta["title"], channel=meta["channel"], progress="Generating breakdown")
+        title = artifacts.clean_title(rec.get("title") or "") or (rec.get("title") or "")
+        channel = rec.get("channel") or ""
+        transcript_text = rec.get("text") or ""
+        _set(
+            job_id,
+            status="analyzing",
+            engine_used="captions",
+            title=title,
+            channel=channel,
+            duration_seconds=rec.get("duration_seconds"),
+            transcript_text=transcript_text,
+            progress="Generating breakdown",
+        )
 
-        # 2) Breakdown.
         try:
             breakdown_md = await complete(
                 SINGLE_PASS_SYSTEM,
-                single_pass_prompt(meta["title"], meta["channel"], meta["url"], rec["text"]),
+                single_pass_prompt(title, channel, rec.get("url", job["url"]), transcript_text),
                 model=model,
             )
         except LLMError as e:
             _set(job_id, status="error", error=f"Breakdown failed: {e}")
             return
 
-        _set(job_id, status="filing", breakdown_md=breakdown_md, progress="Filing into the research vault")
-
-        # 3) Intake -> classify -> auto-file.
+        artifact_dir = ""
         try:
-            inbox_rel = await filing.intake(breakdown_md, meta)
-            result = await filing.classify_and_file(inbox_rel, breakdown_md, meta, model=model)
-        except Exception as e:  # noqa: BLE001 - filing must not lose the breakdown
-            logger.warning("youtube-research: filing failed for %s: %s", job_id, e)
-            _set(
-                job_id,
-                status="done",
-                progress="Breakdown ready (filing failed; see logs)",
-                error=f"Filing failed: {e}",
+            rel_dir = artifacts.artifact_dir_for(rec["video_id"], title, channel, job.get("destination") or "")
+            meta = {
+                "video_id": rec["video_id"],
+                "url": rec.get("url", job["url"]),
+                "title": title,
+                "channel_title": channel,
+                "duration_seconds": rec.get("duration_seconds"),
+                "language": rec.get("language"),
+                "engine_used": "captions",
+                "transcript": {"backend": "yt-dlp"},
+            }
+            transcript_md = artifacts.transcript_markdown(meta, transcript_text)
+            artifact_dir = await artifacts.write_base(
+                rel_dir, meta=meta, transcript_md=transcript_md, breakdown_md=breakdown_md
             )
-            return
+        except Exception as e:  # noqa: BLE001 - artifact write must not lose the work
+            logger.warning("youtube-research: artifact write failed for %s: %s", job_id, e)
 
-        topic = result.get("topic") or ""
         _set(
             job_id,
-            status="done",
-            filed_path=result.get("filed") or "",
-            topic=topic,
-            tags=result.get("tags") or [],
-            confidence=result.get("confidence") or 0.0,
-            progress=(f"Filed under research/{topic}" if topic else "Filed to research/inbox (no confident topic)"),
+            status="deepdiving" if depth == "deep" else "done",
+            breakdown_md=breakdown_md,
+            artifact_dir=artifact_dir,
+            progress="Extracting deep technical detail" if depth == "deep" else "Breakdown ready",
         )
+
+        if depth == "deep":
+            await _run_deepdive(job_id)
     except Exception as e:  # noqa: BLE001
         logger.exception("youtube-research job crashed: %s", job_id)
         _set(job_id, status="error", error=f"Crashed: {type(e).__name__}: {e}")
+
+
+async def _run_deepdive(job_id: str) -> None:
+    """Run the deep dive on an already-transcribed job. Never raises."""
+    try:
+        job = _JOBS.get(job_id)
+        if not job or not job.get("transcript_text"):
+            _set(job_id, status="error", error="Deep dive needs a completed transcript first.")
+            return
+        _set(job_id, status="deepdiving", progress="Extracting deep technical detail")
+        try:
+            deep_md = await deepdive.run(
+                job.get("title", ""), job.get("channel", ""), job.get("url", ""),
+                job["transcript_text"], model=job.get("model", ""),
+            )
+        except LLMError as e:
+            _set(job_id, status="error", error=f"Deep dive failed: {e}")
+            return
+
+        if job.get("artifact_dir"):
+            try:
+                await artifacts.write_deep(job["artifact_dir"], deep_md)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("youtube-research: deep write failed for %s: %s", job_id, e)
+
+        _set(job_id, status="done", deepdive_md=deep_md, progress="Deep dive ready")
+    except Exception as e:  # noqa: BLE001
+        logger.exception("youtube-research deepdive crashed: %s", job_id)
+        _set(job_id, status="error", error=f"Deep dive crashed: {type(e).__name__}: {e}")

@@ -1,45 +1,45 @@
 # YouTube Research
 
-Paste a YouTube link. The module fetches the video's caption track, has your
-configured AI model write a structured breakdown, and files it into your
-AgeniusDesk notes vault under `research/<topic>/` - classified into one of your
-existing topic folders, with tags in the frontmatter.
+Drop a YouTube link. The module transcribes it from captions, has your
+configured AI model write a structured breakdown (and an optional deep dive),
+and saves the artifacts into your AgeniusDesk notes vault under
+`research/<topic>/`. The view mirrors the main AgeniusDesk Research tab; the
+difference is that everything is saved inside the containerized harness vault,
+not on your local disk.
 
 ## What it does
 
-1. **Transcribe (captions-only).** Uses yt-dlp in-process to pull the video's
-   caption track (manual subtitles first, then auto-generated), preferring the
-   json3 format. No GPU, no whisper, no sidecar. yt-dlp is provided by the
-   AgeniusDesk runtime. The video must have captions or subtitles; videos with
-   captions disabled are not supported in v1.
-2. **Break down.** Sends the transcript to your configured AgeniusDesk AI
-   provider (the same one the Assistant uses) and gets back a dense markdown
-   breakdown: TL;DR, key concepts, how it works, concrete details, how to apply.
-3. **Intake → classify → auto-file.** The breakdown is written to
-   `research/inbox/` first (nothing is lost if classification fails), then the
-   model classifies it into one of your **existing** `research/` topic folders
-   (it never invents a topic) and the note is moved there with tags written into
-   the frontmatter. No confident fit → it stays in `research/inbox/` for manual
-   filing.
+1. **Transcribe (captions-only).** Uses yt-dlp in-process to pull the caption
+   track (manual subtitles first, then auto-generated), preferring json3. No GPU,
+   no whisper, no sidecar. yt-dlp is provided by the AgeniusDesk runtime. The
+   video must have captions or subtitles.
+2. **Single pass.** Sends the transcript to your configured AgeniusDesk AI
+   provider and gets a dense breakdown: thesis, key concepts, architectures,
+   golden nuggets, tools, and how to apply it.
+3. **Deep dive (optional).** A second, transcript-grounded pass that extracts the
+   depth the summary omits: exact numbers, verbatim command/tool sequences,
+   design rationale, quotes, and what the video underspecifies.
+4. **Save to the harness vault.** Each run writes `transcript.md`, `BREAKDOWN.md`,
+   (and `BREAKDOWN-deep.md` when run) plus `meta.json` into
+   `research/<destination>/_youtube/<channel>/<title>/` in your notes vault,
+   through the indexed notes API, so they are full-text-searchable in the Harness.
 
-Breakdowns are written through the host notes vault, so they are first-class,
-full-text-searchable notes - not loose files.
+## The view
 
-## Starter taxonomy
-
-On first run it seeds these folders under `research/` (all operator-editable -
-add or remove folders and the classifier adapts, because it reads the live
-folder list as its candidate set):
-
-`inbox` (intake, never a target), `ai-and-llms`, `automation-and-n8n`,
-`business-and-marketing`, `engineering-and-devtools`, `productivity`, `misc`.
+Same as the main app: a job list on the left, a detail pane on the right with
+**Breakdown / Deep dive / Transcript** tabs and rendered markdown. A toolbar with
+the URL, a **Single pass / Deep dive** toggle, provider + model pickers (default
+to your saved assistant config), and a destination topic folder (blank files
+under `_inbox`). Per run you can run a deep dive, download the markdown, move it
+to another topic folder, or delete it.
 
 ## Configuration
 
 - **AI provider:** uses your AgeniusDesk Assistant provider + model + key
-  (Settings → AI). No separate key needed; the `secrets_required` entries are
-  optional and only there so the module card shows which provider key applies.
-- No other configuration. v1 has no sidecar and no environment variables.
+  (Settings -> AI), with the per-run provider/model pickers. If the global key is
+  set as a `$REF` in Models, it is resolved by the conventional secret name
+  (`$OPEN_ROUTER_KEY` / `$OPEN_AI_KEY` / `$ANTHROPIC_KEY`).
+- No sidecar, no GPU, no extra environment variables in v1.
 
 ## Declared capabilities
 
@@ -52,15 +52,16 @@ folder list as its candidate set):
 
 Filing goes through the indexed notes API rather than raw file writes, so
 AgeniusDesk's static scanner reports the declared `research/` write path as an
-over-declaration (INFO) - that is expected and documented: the scanner cannot
-see writes that go through a host API.
+over-declaration (INFO). That is expected: the scanner cannot see writes that go
+through a host API.
 
-## Limitations
+## Notes and limitations
 
 - Captions-only. A whisper fallback for videos without captions is deferred.
-- Caption fetching depends on YouTube's watch-page shape; if YouTube changes it
-  or serves a consent interstitial, you get a clear error rather than a silent
-  empty transcript.
+- The recent-runs list is per session; the durable record is the set of notes in
+  your vault (searchable in the Harness). A restart clears the list, not the notes.
+- Caption fetching depends on YouTube; if it changes its watch page you get a
+  clear error rather than a silent empty transcript.
 
 ## License
 
