@@ -28,10 +28,21 @@ not on your local disk.
 
 Same as the main app: a job list on the left, a detail pane on the right with
 **Breakdown / Deep dive / Transcript** tabs and rendered markdown. A toolbar with
-the URL, a **Single pass / Deep dive** toggle, provider + model pickers (default
-to your saved assistant config), and a destination topic folder (blank files
-under `_inbox`). Per run you can run a deep dive, download the markdown, move it
-to another topic folder, or delete it.
+the URL, a **Single pass / Deep dive** toggle, and provider + model pickers
+(default to your saved assistant config). Per run you can run a deep dive,
+download the markdown, move it to another topic folder, or delete it.
+
+## Filing: auto-classify or pick a folder
+
+- **Leave the destination blank** and the breakdown is auto-classified: the LLM
+  picks the best-fit topic folder from your existing `research/` folders (or
+  proposes a concise new one) and the note is moved there, out of `_inbox`.
+- **Pick or type a folder** in the destination box to file there explicitly.
+- **Create your own folders** with the **+ Folder** button (nest with `/`, e.g.
+  `ai/agents`). Custom folders immediately become both destination options and
+  auto-classify targets, so the classifier "drops it in the right place" for
+  your own taxonomy. You own the taxonomy; the starter folders are just a seed
+  you can rename, remove, or extend.
 
 ## Configuration
 

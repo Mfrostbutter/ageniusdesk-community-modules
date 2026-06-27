@@ -234,6 +234,17 @@ document.addEventListener('click', async (e) => {
     depth.style.background = 'var(--accent,#60a5fa)'; depth.style.color = '#fff'; depth.dataset.active = '1';
     return;
   }
+  if (t.closest('#ytr-newfolder')) {
+    const name = window.prompt('New research topic folder (e.g. ai-assisted-coding). Nest with /, e.g. ai/agents:', '');
+    if (!name || !name.trim()) return;
+    try {
+      const res = await jpost(`${API}/folders`, { path: name.trim() });
+      await loadDestinations();
+      const dest = $('ytr-dest'); if (dest) dest.value = res.path;
+      window.AgeniusDesk?.notify(`Created research/${res.path}`);
+    } catch (err) { window.AgeniusDesk?.notify(err.message, 'error'); }
+    return;
+  }
   if (t.closest('#ytr-run')) return void runJob();
 
   const card = t.closest('.ytr-card');

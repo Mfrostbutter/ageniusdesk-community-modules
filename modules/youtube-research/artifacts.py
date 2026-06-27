@@ -177,6 +177,7 @@ def make_folder(rel: str) -> str:
 
 _STARTER_TOPICS = (
     DEFAULT_TOPIC,
+    "ai-assisted-coding",
     "ai-engineering",
     "automation-and-n8n",
     "engineering-and-devtools",
