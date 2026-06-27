@@ -1,0 +1,30 @@
+{
+  "id": "youtube-research",
+  "name": "YouTube Research",
+  "version": "0.1.0",
+  "min_app_version": "0.1.0",
+  "description": "Paste a YouTube link, transcribe it from captions, generate a structured breakdown, and auto-file it into your notes vault under research/<topic>/.",
+  "author": "Agenius AI Labs",
+  "author_url": "https://ageniusailabs.com",
+  "repo": "Mfrostbutter/ageniusdesk-community-modules",
+  "license": "MIT",
+  "routes_prefix": "/api/youtube-research",
+  "homepage": "https://github.com/Mfrostbutter/ageniusdesk-community-modules/tree/main/modules/youtube-research",
+  "capabilities": {
+    "network": {
+      "enabled": true,
+      "hosts": ["*.youtube.com", "*.youtu.be", "api.openai.com", "api.anthropic.com", "openrouter.ai"]
+    },
+    "filesystem": { "write_paths": ["research"] },
+    "subprocess": false,
+    "env": []
+  },
+  "secrets_required": [
+    { "key": "ANTHROPIC_KEY", "description": "Anthropic API key (if the assistant is set to Anthropic)", "required": false },
+    { "key": "OPEN_AI_KEY", "description": "OpenAI API key (if the assistant is set to OpenAI)", "required": false },
+    { "key": "OPEN_ROUTER_KEY", "description": "OpenRouter API key (if the assistant is set to OpenRouter)", "required": false }
+  ],
+  "frontend": {
+    "nav": { "label": "Research", "icon": "youtube", "view": "research.html" }
+  }
+}

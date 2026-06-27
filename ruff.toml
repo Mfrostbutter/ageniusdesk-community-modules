@@ -1,0 +1,5 @@
+# Matches AgeniusDesk CE conventions so modules lint the same way the host does.
+line-length = 120
+
+[lint]
+select = ["E", "F", "I", "W"]

@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Local/editor
+.DS_Store
+.idea/
+.vscode/
+*.local
+.local/
+
+# Test/build artifacts
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
