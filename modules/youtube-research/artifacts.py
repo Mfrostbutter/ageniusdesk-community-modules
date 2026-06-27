@@ -219,10 +219,21 @@ async def move_artifact(current_rel: str, destination: str) -> str:
     if dst == src:
         return new_rel
     if dst.exists():
-        raise ValueError("a different video already occupies the target folder")
+        # Only a DIFFERENT video is a real conflict. The SAME video already
+        # filed there means this is a duplicate re-run; fall through and let the
+        # writes below overwrite it, then drop the source copy.
+        existing_id = ""
+        dmeta = dst / "meta.md"
+        if dmeta.exists():
+            try:
+                existing_id = json.loads(dmeta.read_text(encoding="utf-8")).get("video_id") or ""
+            except Exception:
+                existing_id = ""
+        if existing_id and existing_id != video_id:
+            raise ValueError("a different video already occupies the target folder")
 
-    # Re-write each file at the new location through the indexed API, then drop
-    # the old copies (write + delete == an indexed move).
+    # Re-write each file at the new location through the indexed API (overwriting
+    # a same-video target), then drop the old copies (write + delete == move).
     for f in sorted(src.glob("*")):
         if not f.is_file():
             continue
