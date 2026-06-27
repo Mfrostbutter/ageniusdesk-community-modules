@@ -21,16 +21,17 @@ not on your local disk.
    design rationale, quotes, and what the video underspecifies.
 4. **Save to the harness vault.** Each run writes `transcript.md`, `BREAKDOWN.md`,
    (and `BREAKDOWN-deep.md` when run) plus `meta.json` into
-   `research/<destination>/_youtube/<channel>/<title>/` in your notes vault,
+   `research/<destination>/<channel>/<title>/` in your notes vault,
    through the indexed notes API, so they are full-text-searchable in the Harness.
 
 ## The view
 
 Same as the main app: a job list on the left, a detail pane on the right with
 **Breakdown / Deep dive / Transcript** tabs and rendered markdown. A toolbar with
-the URL, a **Single pass / Deep dive** toggle, and provider + model pickers
-(default to your saved assistant config). Per run you can run a deep dive,
-download the markdown, move it to another topic folder, or delete it.
+the URL and a **Single pass / Deep dive** toggle; it also shows the provider and
+model that writes the breakdown (configured in Settings > AI). Per run you can
+run a deep dive, download the markdown, move it to another topic folder, or
+delete it.
 
 ## Filing: auto-classify or pick a folder
 

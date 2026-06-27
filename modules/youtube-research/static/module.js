@@ -14,8 +14,6 @@ const CDN = 'https://esm.sh';
 let _jobs = [];
 let _selectedId = null;
 let _detailTab = 'breakdown';
-let _savedProvider = '';
-let _savedModel = '';
 let _marked = null;
 let _poll = null;
 
@@ -65,43 +63,19 @@ function fmtWhen(iso) { if (!iso) return ''; try { return new Date(iso.replace('
 
 function inflight() { return _jobs.some(j => ['queued', 'transcribing', 'analyzing', 'deepdiving'].includes(j.status)); }
 
-// ── Model picker ─────────────────────────────────────────────────────────────
+// ── Model info (read-only: which provider + model writes the breakdown) ───────
 
-function activeProvider() { return ($('ytr-provider')?.value || '') || _savedProvider; }
-function encodeModel() {
-  const pv = $('ytr-provider')?.value || '';
-  const mv = $('ytr-model')?.value || '';
-  if (!pv) return mv;
-  return `${pv}::${mv}`;
-}
-async function loadModels() {
-  const sel = $('ytr-model');
-  if (!sel) return;
-  sel.innerHTML = '<option value="">Loading…</option>';
-  let models = [];
-  try { models = (await jget(`/api/assistant/models?provider=${encodeURIComponent(activeProvider())}`)).models || []; } catch { /* keep default */ }
-  // Disclose the resolved default model when the saved provider is active.
-  const onSavedProvider = !($('ytr-provider')?.value);
-  const defLabel = onSavedProvider && _savedModel ? `Default model (${_savedModel})` : 'Default model';
-  const opts = [`<option value="">${esc(defLabel)}</option>`];
-  for (const m of models) {
-    const id = typeof m === 'string' ? m : (m.id || m.name || '');
-    const label = typeof m === 'string' ? m : (m.label || m.name || m.id || '');
-    if (id) opts.push(`<option value="${esc(id)}">${esc(label)}</option>`);
-  }
-  sel.innerHTML = opts.join('');
-}
-async function initProviderModel() {
+async function showModelInfo() {
+  let provider = '', model = '';
   try {
     const cfg = await jget('/api/assistant/config');
-    _savedProvider = cfg.provider || 'anthropic';
-    _savedModel = cfg.model || '';
-  } catch { _savedProvider = 'anthropic'; }
-  // Disclose the resolved default provider in the picker so operators know which
-  // provider/model will write the breakdown on a plain Run.
-  const provSel = $('ytr-provider');
-  if (provSel && provSel.options[0]) provSel.options[0].textContent = `Default provider (${_savedProvider})`;
-  await loadModels();
+    provider = cfg.provider || '';
+    model = cfg.model || '';
+  } catch { /* leave blank */ }
+  const el = $('ytr-modelinfo');
+  if (!el) return;
+  el.textContent = (provider || model) ? `${provider}${model ? ' · ' + model : ''}` : '';
+  el.title = `Breakdown model (change in Settings > AI): ${provider}${model ? ' / ' + model : ''}`;
 }
 async function loadDestinations() {
   const dl = $('ytr-dest-list');
@@ -212,7 +186,7 @@ async function runJob() {
   const btn = $('ytr-run');
   if (btn) { btn.disabled = true; btn.textContent = 'Starting...'; }
   try {
-    const job = await jpost(`${API}/jobs`, { url, depth, destination: ($('ytr-dest')?.value || '').trim(), model: encodeModel() });
+    const job = await jpost(`${API}/jobs`, { url, depth, destination: ($('ytr-dest')?.value || '').trim(), model: '' });
     if (urlEl) urlEl.value = '';
     _jobs.unshift(job);
     await selectJob(job.id);
@@ -267,7 +241,7 @@ document.addEventListener('click', async (e) => {
 
   if (t.closest('#ytr-deepdive')) {
     const id = _selectedId;
-    try { await jpost(`${API}/jobs/${id}/deepdive`, { model: encodeModel() }); window.AgeniusDesk?.notify('Deep dive started.'); startPolling(); }
+    try { await jpost(`${API}/jobs/${id}/deepdive`, { model: '' }); window.AgeniusDesk?.notify('Deep dive started.'); startPolling(); }
     catch (err) { window.AgeniusDesk?.notify(err.message, 'error'); }
     return;
   }
@@ -291,12 +265,9 @@ document.addEventListener('click', async (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.target instanceof Element && e.target.id === 'ytr-url') { e.preventDefault(); runJob(); }
 });
-document.addEventListener('change', (e) => {
-  if (e.target instanceof Element && e.target.id === 'ytr-provider') loadModels();
-});
 
 async function mount() {
-  await initProviderModel();
+  await showModelInfo();
   await loadDestinations();
   await loadJobs();
   if (inflight()) startPolling();
