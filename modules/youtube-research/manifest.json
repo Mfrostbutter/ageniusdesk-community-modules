@@ -2,7 +2,7 @@
   "id": "youtube-research",
   "name": "YouTube Research",
   "version": "0.1.0",
-  "min_app_version": "0.1.0",
+  "min_app_version": "0.2.0",
   "description": "Paste a YouTube link, transcribe it from captions, generate a structured breakdown, and auto-file it into your notes vault under research/<topic>/.",
   "author": "Agenius AI Labs",
   "author_url": "https://ageniusailabs.com",
