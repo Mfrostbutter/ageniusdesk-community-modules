@@ -7,8 +7,8 @@ files on the operator's machine.
 
 Layout under research/:
 
-    <topic-dest>/_youtube/<channel-slug>/<title-slug>[-<videoid>]/
-        meta.json          video metadata + job params
+    <topic-dest>/<channel-slug>/<title-slug>[-<videoid>]/
+        meta.md            video metadata + job params (JSON body)
         transcript.md      full transcript text
         BREAKDOWN.md       single-pass breakdown
         BREAKDOWN-deep.md  deep dive (only if run)
@@ -84,13 +84,7 @@ def sanitize_destination(destination: str) -> str:
 
 
 def _topic_dest(destination: str) -> str:
-    dest = sanitize_destination(destination)
-    if not dest:
-        return ""
-    segs = dest.split("/")
-    if "_youtube" in segs:
-        segs = segs[: segs.index("_youtube")]
-    return "/".join(segs)
+    return sanitize_destination(destination)
 
 
 def _dedupe_folder(parent_rel: Path, slug: str, video_id: str) -> str:
@@ -110,11 +104,13 @@ def _dedupe_folder(parent_rel: Path, slug: str, video_id: str) -> str:
 
 
 def artifact_dir_for(video_id: str, title: str, channel: str, destination: str = "") -> str:
-    """Build the vault-relative artifact dir for one video (under research/)."""
+    """Build the vault-relative artifact dir for one video.
+
+    Layout: research/<topic>/<channel-slug>/<title-slug>[-<videoid>]/
+    """
     slug = _slug(clean_title(title) or title)
-    base = Path("_youtube") / _slug(channel or "unknown-channel")
     topic = _topic_dest(destination) or DEFAULT_TOPIC
-    parent = Path(topic) / base
+    parent = Path(topic) / _slug(channel or "unknown-channel")
     folder = _dedupe_folder(parent, slug, video_id)
     return (Path(RESEARCH_ROOT) / parent / folder).as_posix()
 
