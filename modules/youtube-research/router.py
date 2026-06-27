@@ -286,6 +286,7 @@ async def _run_job(job_id: str) -> None:
         # destination is respected as-is.
         destination = job.get("destination") or ""
         if artifact_dir and destination in ("", artifacts.DEFAULT_TOPIC):
+            artifacts.ensure_taxonomy()  # guarantee candidate folders exist to classify into
             await _set(job_id, progress="Filing into a topic folder")
             topic = await classify.classify_topic(
                 title, channel, breakdown_md, artifacts.list_topics(), model=model
