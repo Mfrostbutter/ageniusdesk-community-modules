@@ -53,6 +53,43 @@ detects becomes a HIGH "undeclared capability" finding.
 Keep it boring: literal hosts, declared writes, no dynamic imports. A clean scan
 is the easiest module to get an operator to install.
 
+## Frontend (sandboxed iframe)
+
+If your module declares a `frontend.nav` view, ship the view HTML and an optional
+`module.js` under `modules/<id>/static/`. AgeniusDesk loads the view into a
+**sandboxed `<iframe>`** (`allow-scripts`, but not `allow-same-origin`), so your
+code runs in an opaque origin and **cannot reach the host page** (no host DOM,
+`window`, cookies, or storage). This is the boundary that keeps a buggy module
+from breaking the AgeniusDesk UI.
+
+What you get and how to work within it:
+
+- **Write a fragment, not a full page.** The host wraps your view HTML in a full
+  document that already links its `base.css` and `components.css` and injects the
+  active theme's CSS variables. So host component classes (`.btn`, `.btn-primary`,
+  `.btn-sm`, `.input`, `.card`) and CSS variables (`var(--accent)`,
+  `var(--bg-panel)`, `var(--text-secondary)`, `var(--radius)`, ...) are available
+  and themed. `module.js` (if present) is loaded as `<script type="module">`.
+- **Talk to the host through `window.AgeniusDesk`** (provided inside the iframe):
+  - `await AgeniusDesk.fetch(path, opts)` returns a Response-like object
+    (`.ok`, `.status`, `await .json()`, `await .text()`). Only **same-origin
+    `/api/` paths** are reachable; the host adds auth and CSRF for you. Pass
+    `opts.body` as a string and `opts.headers` as a plain object.
+  - `AgeniusDesk.notify(message, level)` shows a host toast.
+  - `AgeniusDesk.navigate(viewName)` switches the host view.
+  - `AgeniusDesk.openInHarness(relPath)` opens a vault path in the Harness.
+- **`prompt`, `confirm`, and `window.open` work** (the sandbox allows modals and
+  popups). Use `window.open(...)` for downloads / external links; opening a
+  same-origin `/api/...` artifact URL in a new tab carries the session normally.
+- **External ESM imports work** (e.g. `import('https://esm.sh/marked')`), subject
+  to the host's CSP if the operator has set one.
+- The iframe **auto-resizes** to your content height; do not rely on a fixed host
+  viewport.
+
+A fresh iframe is created each time the user opens your view, so your timers and
+listeners are torn down on navigate-away. Your module's **backend** still runs
+in-process with full access; the iframe constrains the frontend only.
+
 ## Dependencies
 
 Modules run inside the AgeniusDesk Python environment. Prefer the standard
