@@ -108,10 +108,8 @@ async def create_job(req: CreateJob):
         raise HTTPException(status_code=400, detail="Could not parse a YouTube video id from that input.")
     if req.depth not in ("single", "deep"):
         raise HTTPException(status_code=400, detail="depth must be 'single' or 'deep'.")
-    job_id = uuid.uuid4().hex[:16]
     ts = store.now()
-    job = {
-        "id": job_id,
+    fields = {
         "url": req.url.strip(),
         "video_id": video_id,
         "depth": req.depth,
@@ -132,7 +130,15 @@ async def create_job(req: CreateJob):
         "created_at": ts,
         "updated_at": ts,
     }
-    created = await store.create(job)
+    # A re-run of the same video replaces its existing entry (the harness keeps
+    # one copy, so the view does too): reuse the row, reset it, bump it to top.
+    existing = await store.find_by_video(video_id)
+    if existing:
+        job_id = existing["id"]
+        created = await store.update(job_id, **fields)
+    else:
+        job_id = uuid.uuid4().hex[:16]
+        created = await store.create({"id": job_id, **fields})
     asyncio.create_task(_run_job(job_id))
     return created
 

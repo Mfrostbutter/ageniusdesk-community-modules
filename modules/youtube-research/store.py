@@ -101,6 +101,21 @@ async def get(job_id: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+async def find_by_video(video_id: str) -> dict[str, Any] | None:
+    """Most-recent job for a video id, so a re-run can replace it (no dupes)."""
+    if not video_id:
+        return None
+    await _ensure()
+    db = await get_db()
+    cur = await db.execute(
+        f"SELECT * FROM {_TABLE} WHERE video_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+        (video_id,),
+    )
+    row = await cur.fetchone()
+    await cur.close()
+    return dict(row) if row else None
+
+
 async def list_jobs(limit: int = 200) -> list[dict[str, Any]]:
     await _ensure()
     db = await get_db()
