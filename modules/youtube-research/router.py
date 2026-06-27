@@ -33,7 +33,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
-from . import artifacts, captions, deepdive
+from . import artifacts, captions, classify, deepdive
 from .llm import LLMError, complete
 from .prompts import SINGLE_PASS_SYSTEM, single_pass_prompt
 
@@ -301,11 +301,28 @@ async def _run_job(job_id: str) -> None:
         except Exception as e:  # noqa: BLE001 - artifact write must not lose the work
             logger.warning("youtube-research: artifact write failed for %s: %s", job_id, e)
 
+        # Auto-file: when the operator picked no destination, classify the
+        # breakdown into a topic folder and move it out of the inbox. An explicit
+        # destination is respected as-is.
+        destination = job.get("destination") or ""
+        if artifact_dir and destination in ("", artifacts.DEFAULT_TOPIC):
+            _set(job_id, progress="Filing into a topic folder")
+            topic = await classify.classify_topic(
+                title, channel, breakdown_md, artifacts.list_topics(), model=model
+            )
+            if topic:
+                try:
+                    artifact_dir = await artifacts.move_artifact(artifact_dir, topic)
+                    destination = topic
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("youtube-research: auto-file move failed for %s: %s", job_id, e)
+
         _set(
             job_id,
             status="deepdiving" if depth == "deep" else "done",
             breakdown_md=breakdown_md,
             artifact_dir=artifact_dir,
+            destination=destination,
             progress="Extracting deep technical detail" if depth == "deep" else "Breakdown ready",
         )
 

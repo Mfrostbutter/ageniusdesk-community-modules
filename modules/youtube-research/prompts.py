@@ -10,6 +10,46 @@ the main app exactly:
 
 from __future__ import annotations
 
+import json
+
+# ── Auto-filing classifier ───────────────────────────────────────────────────
+
+CLASSIFY_SYSTEM = (
+    "You file a research note into a topic folder. You return STRICT JSON and "
+    "nothing else. You prefer an existing topic when one is a reasonable fit; "
+    "only when none fit do you propose a new, concise, lower-kebab-case topic "
+    "(2-4 words, e.g. 'ai-engineering', 'home-networking'). Never use the inbox "
+    "as a topic."
+)
+
+
+def classify_prompt(title: str, channel: str, breakdown: str, topics: list[str]) -> str:
+    topic_list = "\n".join(f"- {t}" for t in topics) or "(none yet)"
+    schema = json.dumps({"topic": "<existing topic or a new kebab-case topic>", "confidence": "0.0-1.0"})
+    return f"""Pick the best research topic folder for this note.
+
+Existing topics:
+{topic_list}
+
+Rules:
+- Prefer an existing topic when one reasonably fits.
+- If none fit, propose ONE new concise lower-kebab-case topic (2-4 words).
+- Never answer "inbox" or "_inbox".
+- confidence is your fit confidence (0.0-1.0).
+
+Return STRICT JSON, nothing else:
+{schema}
+
+Title: {title or "(unknown)"}
+Channel: {channel or "(unknown)"}
+
+Breakdown:
+\"\"\"
+{breakdown[:6000]}
+\"\"\"
+"""
+
+
 # ── Single pass ──────────────────────────────────────────────────────────────
 
 SINGLE_PASS_SYSTEM = (

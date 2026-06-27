@@ -98,7 +98,7 @@ def _dedupe_folder(parent_rel: Path, slug: str, video_id: str) -> str:
     if not target.exists():
         return slug
     existing_id = ""
-    meta = target / "meta.json"
+    meta = target / "meta.md"
     if meta.exists():
         try:
             existing_id = json.loads(meta.read_text(encoding="utf-8")).get("video_id") or ""
@@ -132,8 +132,11 @@ def transcript_markdown(meta: dict[str, Any], transcript_text: str) -> str:
 
 
 async def write_base(rel_dir: str, *, meta: dict[str, Any], transcript_md: str, breakdown_md: str) -> str:
-    """Write meta.json + transcript.md + BREAKDOWN.md into the vault. Returns rel_dir."""
-    await vault.write(f"{rel_dir}/meta.json", json.dumps(meta, indent=2, ensure_ascii=False))
+    """Write meta + transcript.md + BREAKDOWN.md into the vault. Returns rel_dir.
+
+    The vault forces a .md extension, so metadata is stored as meta.md (JSON body).
+    """
+    await vault.write(f"{rel_dir}/meta.md", json.dumps(meta, indent=2, ensure_ascii=False))
     await vault.write(f"{rel_dir}/transcript.md", transcript_md)
     await vault.write(f"{rel_dir}/BREAKDOWN.md", breakdown_md)
     return rel_dir
@@ -172,12 +175,28 @@ def make_folder(rel: str) -> str:
     return rel
 
 
+_STARTER_TOPICS = (
+    DEFAULT_TOPIC,
+    "ai-engineering",
+    "automation-and-n8n",
+    "engineering-and-devtools",
+    "business-and-marketing",
+    "productivity",
+    "misc",
+)
+
+
 def ensure_taxonomy() -> None:
     """Seed research/ with the inbox + a small starter taxonomy (idempotent)."""
     vault.ensure_vault()
     base = _research_abs()
-    for topic in (DEFAULT_TOPIC, "ai-and-llms", "automation-and-n8n", "engineering-and-devtools", "misc"):
+    for topic in _STARTER_TOPICS:
         (base / topic).mkdir(parents=True, exist_ok=True)
+
+
+def list_topics() -> list[str]:
+    """Existing research topic folders (the classifier candidate set), minus inbox."""
+    return [f["name"] for f in list_folders("") if f["name"] != DEFAULT_TOPIC]
 
 
 async def move_artifact(current_rel: str, destination: str) -> str:
@@ -187,7 +206,7 @@ async def move_artifact(current_rel: str, destination: str) -> str:
     if research not in src.parents or not src.is_dir():
         raise ValueError("source artifact folder not found")
 
-    meta_path = src / "meta.json"
+    meta_path = src / "meta.md"
     meta: dict[str, Any] = {}
     if meta_path.exists():
         try:
