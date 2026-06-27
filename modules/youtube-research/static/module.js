@@ -172,6 +172,7 @@ function detailHeader(job) {
     </div>
     <div style="display:flex;gap:6px;flex-shrink:0">
       ${canDeep ? `<button id="ytr-deepdive" class="btn btn-sm" style="color:#a78bfa;border-color:#a78bfa55">Run deep dive</button>` : ''}
+      ${job.artifact_dir ? `<button class="ytr-harness btn btn-sm" title="Open this run's folder in the Harness vault">View in Harness</button>` : ''}
       ${job.artifact_dir ? `<button class="ytr-move btn btn-sm">Move</button>` : ''}
       ${job.breakdown_md ? `<button class="ytr-dl btn btn-sm" data-kind="breakdown">Download</button>` : ''}
       <button class="ytr-del btn btn-sm" style="color:var(--text-muted)">Delete</button>
@@ -274,6 +275,15 @@ document.addEventListener('click', async (e) => {
     const id = _selectedId;
     try { await jpost(`${API}/jobs/${id}/deepdive`, { model: encodeModel() }); window.AgeniusDesk?.notify('Deep dive started.'); startPolling(); }
     catch (err) { window.AgeniusDesk?.notify(err.message, 'error'); }
+    return;
+  }
+  if (t.closest('.ytr-harness')) {
+    const job = _jobs.find(j => j.id === _selectedId);
+    const dir = job?.artifact_dir;
+    if (!dir) return;
+    const open = window.AgeniusDesk?.openInHarness || window.__harnessOpenPath;
+    if (open) open(`${dir}/BREAKDOWN.md`);
+    else window.AgeniusDesk?.notify('Harness deep-link not available in this AgeniusDesk version.', 'warning');
     return;
   }
   const dl = t.closest('.ytr-dl');

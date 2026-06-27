@@ -30,8 +30,8 @@ Same as the main app: a job list on the left, a detail pane on the right with
 **Breakdown / Deep dive / Transcript** tabs and rendered markdown. A toolbar with
 the URL and a **Single pass / Deep dive** toggle; it also shows the provider and
 model that writes the breakdown (configured in Settings > AI). Per run you can
-run a deep dive, download the markdown, move it to another topic folder, or
-delete it.
+run a deep dive, **View in Harness** (open the run's note in the vault),
+download the markdown, move it to another topic folder, or delete it.
 
 ## Filing: auto-classify or pick a folder
 
