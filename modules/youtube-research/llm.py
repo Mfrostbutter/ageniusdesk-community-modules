@@ -18,6 +18,8 @@ import re
 
 import httpx
 
+from . import _host
+
 logger = logging.getLogger(__name__)
 
 MAX_TOKENS = 8000
@@ -72,7 +74,17 @@ async def complete(system: str, user: str, *, max_tokens: int = MAX_TOKENS, mode
     max_tokens as too large, retry with the model's actual ceiling (parsed from
     the error) or a fallback floor. Raises LLMError on misconfiguration or an
     unrecoverable provider failure.
+
+    Under isolation the host runs the completion through its tool-free bridge
+    executor (the key never reaches this worker); in_process we dispatch to the
+    provider directly using the saved assistant config below.
     """
+    if _host.ISOLATED:
+        try:
+            return await _host.assistant_complete(system, user, model=model, max_tokens=max_tokens)
+        except _host.HostError as e:
+            raise LLMError(str(e)) from e
+
     cfg = _config()
     provider = cfg["provider"]
     model = model or cfg["model"]

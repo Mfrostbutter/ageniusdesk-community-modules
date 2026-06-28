@@ -26,21 +26,28 @@ import logging
 import uuid
 from typing import Any
 
-from backend.auth_gate import require_trusted_request
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
-from . import artifacts, captions, classify, deepdive, store
+from . import _host, artifacts, captions, classify, deepdive, store
 from .llm import LLMError, complete
 from .prompts import SINGLE_PASS_SYSTEM, single_pass_prompt
 
 logger = logging.getLogger(__name__)
 
+if _host.ISOLATED:
+    # The host reverse-proxy authenticated the request before forwarding it; the
+    # isolated worker cannot import the host auth gate and does not need to.
+    _ROUTE_DEPS: list = []
+else:
+    from backend.auth_gate import require_trusted_request
+    _ROUTE_DEPS = [Depends(require_trusted_request)]
+
 router = APIRouter(
     prefix="/api/youtube-research",
     tags=["youtube-research"],
-    dependencies=[Depends(require_trusted_request)],
+    dependencies=_ROUTE_DEPS,
 )
 
 
@@ -72,9 +79,9 @@ async def get_config():
 
 @router.get("/folders")
 async def list_folders(path: str = Query(default="")):
-    artifacts.ensure_taxonomy()
+    await artifacts.ensure_taxonomy()
     rel = artifacts.sanitize_destination(path)
-    return {"path": rel, "folders": artifacts.list_folders(rel)}
+    return {"path": rel, "folders": await artifacts.list_folders(rel)}
 
 
 class CreateFolder(BaseModel):
@@ -84,7 +91,7 @@ class CreateFolder(BaseModel):
 @router.post("/folders")
 async def create_folder(req: CreateFolder):
     try:
-        created = artifacts.make_folder(req.path)
+        created = await artifacts.make_folder(req.path)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"path": created}
@@ -269,7 +276,7 @@ async def _run_job(job_id: str) -> None:
 
         artifact_dir = ""
         try:
-            rel_dir = artifacts.artifact_dir_for(rec["video_id"], title, channel, job.get("destination") or "")
+            rel_dir = await artifacts.artifact_dir_for(rec["video_id"], title, channel, job.get("destination") or "")
             meta = {
                 "video_id": rec["video_id"],
                 "url": rec.get("url", job["url"]),
@@ -292,10 +299,10 @@ async def _run_job(job_id: str) -> None:
         # destination is respected as-is.
         destination = job.get("destination") or ""
         if artifact_dir and destination in ("", artifacts.DEFAULT_TOPIC):
-            artifacts.ensure_taxonomy()  # guarantee candidate folders exist to classify into
+            await artifacts.ensure_taxonomy()  # guarantee candidate folders exist to classify into
             await _set(job_id, progress="Filing into a topic folder")
             topic = await classify.classify_topic(
-                title, channel, breakdown_md, artifacts.list_topics(), model=model
+                title, channel, breakdown_md, await artifacts.list_topics(), model=model
             )
             if topic:
                 try:

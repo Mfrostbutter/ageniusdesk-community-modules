@@ -1,9 +1,11 @@
 """Write research artifacts into the AgeniusDesk notes vault (the harness).
 
-Mirrors the main app's research artifacts layout, but writes INTO the
-containerized notes vault (data/workspace/research/...) through the host notes
-API, so breakdowns are first-class, full-text-searchable notes rather than loose
-files on the operator's machine.
+Mirrors the main app's research artifacts layout, but writes INTO the notes vault
+(data/workspace/research/...) through the host services facade (`_host`), so
+breakdowns are first-class, full-text-searchable notes. All vault access goes
+through `_host`: bridge calls when isolated, direct host calls in_process. This
+module works only in vault-relative paths ("research/...") and never touches the
+host filesystem directly.
 
 Layout under research/:
 
@@ -13,9 +15,8 @@ Layout under research/:
         BREAKDOWN.md       single-pass breakdown
         BREAKDOWN-deep.md  deep dive (only if run)
 
-A blank destination files under DEFAULT_TOPIC ("_inbox"). Writes go through
-notes.storage.write (indexed); directory ops use the vault path directly. Paths
-returned to callers are vault-relative (e.g. "research/...").
+A blank destination files under DEFAULT_TOPIC ("_inbox"). Paths returned to
+callers are vault-relative (e.g. "research/...").
 """
 
 from __future__ import annotations
@@ -26,8 +27,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from backend.modules.notes import index as vault_index
-from backend.modules.notes import storage as vault
+from . import _host
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +35,10 @@ RESEARCH_ROOT = "research"
 DEFAULT_TOPIC = "_inbox"
 
 
-def _research_abs() -> Path:
-    return vault.VAULT_DIR / RESEARCH_ROOT
+def _rel(*parts: str) -> str:
+    """Join into a vault-relative path under the research root."""
+    tail = "/".join(p.strip("/") for p in parts if p)
+    return f"{RESEARCH_ROOT}/{tail}" if tail else RESEARCH_ROOT
 
 
 def _slug(text: str, max_len: int = 50) -> str:
@@ -87,32 +89,35 @@ def _topic_dest(destination: str) -> str:
     return sanitize_destination(destination)
 
 
-def _dedupe_folder(parent_rel: Path, slug: str, video_id: str) -> str:
-    target = _research_abs() / parent_rel / slug
-    if not target.exists():
-        return slug
-    existing_id = ""
-    meta = target / "meta.md"
-    if meta.exists():
-        try:
-            existing_id = json.loads(meta.read_text(encoding="utf-8")).get("video_id") or ""
-        except Exception:
-            existing_id = ""
-    if existing_id == (video_id or ""):
+async def _meta_video_id(rel_dir: str) -> str | None:
+    """video_id from a folder's meta.md, or None if the folder/meta is absent."""
+    raw = await _host.notes_read(f"{rel_dir}/meta.md")
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw).get("video_id") or ""
+    except Exception:
+        return ""
+
+
+async def _dedupe_folder(parent_rel: str, slug: str, video_id: str) -> str:
+    """Pick a folder name under parent_rel, disambiguating only a DIFFERENT video."""
+    existing_id = await _meta_video_id(_rel(parent_rel, slug))
+    if existing_id is None or existing_id == (video_id or ""):
         return slug
     return f"{slug}-{video_id}" if video_id else slug
 
 
-def artifact_dir_for(video_id: str, title: str, channel: str, destination: str = "") -> str:
+async def artifact_dir_for(video_id: str, title: str, channel: str, destination: str = "") -> str:
     """Build the vault-relative artifact dir for one video.
 
     Layout: research/<topic>/<channel-slug>/<title-slug>[-<videoid>]/
     """
     slug = _slug(clean_title(title) or title)
     topic = _topic_dest(destination) or DEFAULT_TOPIC
-    parent = Path(topic) / _slug(channel or "unknown-channel")
-    folder = _dedupe_folder(parent, slug, video_id)
-    return (Path(RESEARCH_ROOT) / parent / folder).as_posix()
+    parent = (Path(topic) / _slug(channel or "unknown-channel")).as_posix()
+    folder = await _dedupe_folder(parent, slug, video_id)
+    return _rel(parent, folder)
 
 
 def transcript_markdown(meta: dict[str, Any], transcript_text: str) -> str:
@@ -132,42 +137,40 @@ async def write_base(rel_dir: str, *, meta: dict[str, Any], transcript_md: str, 
 
     The vault forces a .md extension, so metadata is stored as meta.md (JSON body).
     """
-    await vault.write(f"{rel_dir}/meta.md", json.dumps(meta, indent=2, ensure_ascii=False))
-    await vault.write(f"{rel_dir}/transcript.md", transcript_md)
-    await vault.write(f"{rel_dir}/BREAKDOWN.md", breakdown_md)
+    await _host.notes_write(f"{rel_dir}/meta.md", json.dumps(meta, indent=2, ensure_ascii=False))
+    await _host.notes_write(f"{rel_dir}/transcript.md", transcript_md)
+    await _host.notes_write(f"{rel_dir}/BREAKDOWN.md", breakdown_md)
     return rel_dir
 
 
 async def write_deep(rel_dir: str, deep_md: str) -> None:
-    await vault.write(f"{rel_dir}/BREAKDOWN-deep.md", deep_md)
+    await _host.notes_write(f"{rel_dir}/BREAKDOWN-deep.md", deep_md)
 
 
 # ── Folder picker (operates on the research/ subtree) ────────────────────────
 
-def list_folders(rel: str = "") -> list[dict[str, Any]]:
+
+async def list_folders(rel: str = "") -> list[dict[str, Any]]:
     """Immediate subfolders of research/<rel> for the folder picker."""
     rel = sanitize_destination(rel)
-    target = _research_abs() / rel if rel else _research_abs()
-    if not target.is_dir():
-        return []
+    names = await _host.notes_list_folders(_rel(rel))
     out: list[dict[str, Any]] = []
-    for child in sorted((p for p in target.iterdir() if p.is_dir()), key=lambda p: p.name.lower()):
-        if child.name.startswith(".") or child.name == "_youtube":
+    for name in names:
+        if name.startswith(".") or name == "_youtube":
             continue
-        child_rel = f"{rel}/{child.name}" if rel else child.name
-        has_children = any(
-            g.is_dir() and not g.name.startswith(".") and g.name != "_youtube" for g in child.iterdir()
-        )
-        out.append({"name": child.name, "path": sanitize_destination(child_rel), "has_children": has_children})
-    return out
+        child_rel = f"{rel}/{name}" if rel else name
+        sub = await _host.notes_list_folders(_rel(child_rel))
+        has_children = any(s != "_youtube" and not s.startswith(".") for s in sub)
+        out.append({"name": name, "path": sanitize_destination(child_rel), "has_children": has_children})
+    return sorted(out, key=lambda f: f["name"].lower())
 
 
-def make_folder(rel: str) -> str:
+async def make_folder(rel: str) -> str:
     """Create research/<rel> (parents ok). Returns the sanitized relative path."""
     rel = sanitize_destination(rel)
     if not rel:
         raise ValueError("empty folder path")
-    (_research_abs() / rel).mkdir(parents=True, exist_ok=True)
+    await _host.notes_make_folder(_rel(rel))
     return rel
 
 
@@ -183,81 +186,58 @@ _STARTER_TOPICS = (
 )
 
 
-def ensure_taxonomy() -> None:
+async def ensure_taxonomy() -> None:
     """Seed research/ with the inbox + a small starter taxonomy (idempotent)."""
-    vault.ensure_vault()
-    base = _research_abs()
+    await _host.ensure_research_root()
     for topic in _STARTER_TOPICS:
-        (base / topic).mkdir(parents=True, exist_ok=True)
+        await _host.notes_make_folder(_rel(topic))
 
 
-def list_topics() -> list[str]:
+async def list_topics() -> list[str]:
     """Existing research topic folders (the classifier candidate set), minus inbox."""
-    return [f["name"] for f in list_folders("") if f["name"] != DEFAULT_TOPIC]
+    return [f["name"] for f in await list_folders("") if f["name"] != DEFAULT_TOPIC]
 
 
 async def move_artifact(current_rel: str, destination: str) -> str:
     """Move an existing artifact folder to a new destination. Returns new rel dir."""
-    src = (vault.VAULT_DIR / current_rel).resolve()
-    research = _research_abs().resolve()
-    if research not in src.parents or not src.is_dir():
+    current_rel = current_rel.strip("/")
+    if not current_rel.startswith(RESEARCH_ROOT + "/"):
         raise ValueError("source artifact folder not found")
 
-    meta_path = src / "meta.md"
+    meta_raw = await _host.notes_read(f"{current_rel}/meta.md")
     meta: dict[str, Any] = {}
-    if meta_path.exists():
+    if meta_raw:
         try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta = json.loads(meta_raw)
         except Exception:
             meta = {}
     video_id = meta.get("video_id") or ""
-    title = meta.get("title") or src.name
+    title = meta.get("title") or current_rel.rsplit("/", 1)[-1]
     channel = meta.get("channel_title") or meta.get("channel") or ""
 
-    new_rel = artifact_dir_for(video_id, title, channel, destination)
-    dst = (vault.VAULT_DIR / new_rel).resolve()
-    if dst == src:
+    new_rel = await artifact_dir_for(video_id, title, channel, destination)
+    if new_rel == current_rel:
         return new_rel
-    if dst.exists():
-        # Only a DIFFERENT video is a real conflict. The SAME video already
-        # filed there means this is a duplicate re-run; fall through and let the
-        # writes below overwrite it, then drop the source copy.
-        existing_id = ""
-        dmeta = dst / "meta.md"
-        if dmeta.exists():
-            try:
-                existing_id = json.loads(dmeta.read_text(encoding="utf-8")).get("video_id") or ""
-            except Exception:
-                existing_id = ""
-        if existing_id and existing_id != video_id:
-            raise ValueError("a different video already occupies the target folder")
 
-    # Re-write each file at the new location through the indexed API (overwriting
-    # a same-video target), then drop the old copies (write + delete == move).
-    for f in sorted(src.glob("*")):
-        if not f.is_file():
-            continue
-        content = f.read_text(encoding="utf-8")
-        await vault.write(f"{new_rel}/{f.name}", content)
-        old_rel = f"{current_rel}/{f.name}"
-        try:
-            f.unlink()
-            if f.name.endswith(".md"):
-                await vault_index.remove_note(old_rel)
-        except Exception as e:  # pragma: no cover
-            logger.warning("move: failed to remove %s: %s", old_rel, e)
-    _prune_empty_parents(src)
+    # Only a DIFFERENT video at the target is a real conflict; the same video is a
+    # duplicate re-run (fall through and overwrite, then drop the source copy).
+    existing_id = await _meta_video_id(new_rel)
+    if existing_id and video_id and existing_id != video_id:
+        raise ValueError("a different video already occupies the target folder")
+
+    files = await _host.notes_list_files(current_rel)
+    if not files:
+        raise ValueError("source artifact folder not found")
+    for name in files:
+        await _host.notes_move(f"{current_rel}/{name}", f"{new_rel}/{name}")
+    await _prune_empty_parents(current_rel)
     return new_rel
 
 
-def _prune_empty_parents(start: Path) -> None:
-    base = _research_abs().resolve()
-    cur = start.resolve()
-    while cur != base and base in cur.parents:
-        try:
-            if any(cur.iterdir()):
-                break
-            cur.rmdir()
-        except OSError:
-            break
-        cur = cur.parent
+async def _prune_empty_parents(start_rel: str) -> None:
+    """Remove now-empty folders from start_rel up to (not including) the research
+    root. No-op under isolation (the bridge has no rmdir)."""
+    cur = start_rel.strip("/")
+    while cur and cur != RESEARCH_ROOT and cur.startswith(RESEARCH_ROOT + "/"):
+        await _host.remove_empty_dir(cur)
+        cur = cur.rsplit("/", 1)[0]

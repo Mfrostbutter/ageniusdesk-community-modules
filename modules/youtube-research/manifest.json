@@ -1,7 +1,7 @@
 {
   "id": "youtube-research",
   "name": "YouTube Research",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "min_app_version": "0.2.0",
   "description": "Paste a YouTube link, transcribe it from captions, generate a structured breakdown, and auto-file it into your notes vault under research/<topic>/.",
   "author": "Agenius AI Labs",
@@ -17,7 +17,8 @@
     },
     "filesystem": { "write_paths": ["research"] },
     "subprocess": false,
-    "env": []
+    "env": [],
+    "host": { "assistant": true }
   },
   "secrets_required": [
     { "key": "ANTHROPIC_KEY", "description": "Anthropic API key (if the assistant is set to Anthropic)", "required": false },
