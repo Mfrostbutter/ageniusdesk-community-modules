@@ -1,0 +1,42 @@
+{
+  "id": "agent-fleet",
+  "name": "Agent Fleet",
+  "version": "0.1.0",
+  "min_app_version": "0.3.0",
+  "description": "A managed fleet of LangGraph agents, operated the way AgeniusDesk operates n8n instances: a catalog, run + live (polled) graph view, human-in-the-loop approve/resume, and LangSmith tracing. Ships ops-triage (ReAct), fix-proposer (HITL), and health-reporter (parallel fan-out). Runs in_process and needs the langgraph extra installed in the AgeniusDesk environment plus an Anthropic API key.",
+  "author": "Agenius AI Labs",
+  "author_url": "https://ageniusailabs.com",
+  "repo": "Mfrostbutter/ageniusdesk-community-modules",
+  "license": "MIT",
+  "routes_prefix": "/api/agent-fleet",
+  "homepage": "https://github.com/Mfrostbutter/ageniusdesk-community-modules/tree/main/modules/agent-fleet",
+  "capabilities": {
+    "network": {
+      "enabled": true,
+      "hosts": ["api.anthropic.com", "api.openai.com", "api.smith.langchain.com", "smith.langchain.com"]
+    },
+    "subprocess": false,
+    "env": [
+      "OPS_TRIAGE_MODEL",
+      "FIX_PROPOSER_MODEL",
+      "HEALTH_REPORTER_MODEL",
+      "OPS_TRIAGE_MAX_TOKENS",
+      "ANTHROPIC_API_KEY",
+      "ANTHROPIC_KEY",
+      "OPENAI_API_KEY",
+      "OPENAI_KEY",
+      "OPEN_AI_KEY",
+      "LANGSMITH_TRACING",
+      "LANGSMITH_API_KEY",
+      "LANGCHAIN_TRACING_V2"
+    ]
+  },
+  "secrets_required": [
+    { "key": "ANTHROPIC_KEY", "description": "Anthropic API key the agents run on. The AgeniusDesk assistant may already hold it; if so this is not needed again.", "required": false },
+    { "key": "LANGSMITH_API_KEY", "description": "Optional. Set with LANGSMITH_TRACING=true to trace runs in LangSmith.", "required": false },
+    { "key": "OPEN_AI_KEY", "description": "Optional. Only used by a future cross-provider reviewer agent.", "required": false }
+  ],
+  "frontend": {
+    "nav": { "label": "Agent Fleet", "icon": "git-branch", "view": "agent-fleet.html" }
+  }
+}
