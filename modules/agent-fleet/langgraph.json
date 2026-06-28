@@ -1,9 +1,0 @@
-{
-  "dependencies": ["."],
-  "graphs": {
-    "ops_triage": "./agent/studio.py:graph",
-    "fix_proposer": "./agent/studio.py:fix_proposer",
-    "health_reporter": "./agent/studio.py:health_reporter"
-  },
-  "env": ".env"
-}
