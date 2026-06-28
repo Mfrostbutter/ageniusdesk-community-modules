@@ -78,6 +78,27 @@ async def notes_read(rel: str) -> str | None:
         return None
 
 
+async def notes_append(rel: str, content: str) -> dict:
+    """Append to a note (create if missing)."""
+    if ISOLATED:
+        r = await _bridge("/api/_host/notes/append", {"path": rel, "content": content})
+        _raise_for(r, "notes.append")
+        return r.json()
+    from backend.modules.notes import storage as vault
+    return await vault.append(rel, content)
+
+
+async def notes_search(query: str, *, tag: str = "", limit: int = 30) -> list[dict]:
+    """Full-text vault search. Isolated results are scoped to the module's declared
+    read paths host-side; in_process returns the unscoped host search."""
+    if ISOLATED:
+        r = await _bridge("/api/_host/notes/search", {"query": query, "tag": tag, "limit": limit})
+        _raise_for(r, "notes.search")
+        return r.json().get("results", [])
+    from backend.modules.notes import index
+    return await index.search(query, tag or None, limit)
+
+
 async def notes_move(src: str, dst: str) -> None:
     """Move a note (write dst, archive src). Missing src is a no-op."""
     if ISOLATED:
