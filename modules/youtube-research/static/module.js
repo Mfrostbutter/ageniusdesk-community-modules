@@ -121,10 +121,37 @@ async function loadDestinations() {
 
 async function loadJobs() {
   try {
-    _jobs = (await jget(`${API}/jobs`)).jobs || [];
+    const fresh = (await jget(`${API}/jobs`)).jobs || [];
+    // The list response strips the big blobs (breakdown_md/deepdive_md/
+    // transcript_text). Carry over any bodies we already loaded so a poll refresh
+    // doesn't blank out the open detail pane.
+    const prev = new Map(_jobs.map(j => [j.id, j]));
+    _jobs = fresh.map(j => {
+      const p = prev.get(j.id);
+      if (p && (p.breakdown_md || p.deepdive_md || p.transcript_text)) {
+        return { ...j, breakdown_md: p.breakdown_md, deepdive_md: p.deepdive_md, transcript_text: p.transcript_text };
+      }
+      return j;
+    });
     renderList();
-    if (!_selectedId && _jobs.length) await selectJob(_jobs[0].id);
-    else await renderDetail();
+    if (!_selectedId && _jobs.length) { await selectJob(_jobs[0].id); return; }
+    // The list response strips bodies, so the selected job's detail needs its
+    // FULL record. Re-fetch it when its status changed since the last poll (a
+    // finished breakdown or deep dive) or when we never loaded its body — so the
+    // detail renders without a manual page refresh.
+    const sel = _jobs.find(j => j.id === _selectedId);
+    const before = prev.get(_selectedId);
+    const statusChanged = sel && before && sel.status !== before.status;
+    const missingBody = sel && !sel.breakdown_md && sel.status !== 'error' &&
+      (sel.status === 'done' || sel.status === 'deepdiving' || sel.artifact_dir);
+    if (statusChanged || missingBody) {
+      try {
+        const full = await jget(`${API}/jobs/${_selectedId}`);
+        const idx = _jobs.findIndex(j => j.id === _selectedId);
+        if (idx >= 0) _jobs[idx] = full;
+      } catch { /* keep the list version */ }
+    }
+    await renderDetail();
   } catch { /* ignore */ }
 }
 
