@@ -1,0 +1,48 @@
+{
+  "id": "proxmox",
+  "name": "Proxmox",
+  "version": "0.1.0",
+  "min_app_version": "0.4.0",
+  "description": "Connect a Proxmox VE cluster: read-first view of nodes, VMs, and LXCs with live status and health, plus gated start/stop/reboot on guests. Holds no credentials in the worker — the cluster token is injected host-side by the http.request bridge.",
+  "author": "Agenius AI Labs",
+  "author_url": "https://ageniusailabs.com",
+  "repo": "Mfrostbutter/ageniusdesk-community-modules",
+  "license": "MIT",
+  "routes_prefix": "/api/proxmox",
+  "homepage": "https://github.com/Mfrostbutter/ageniusdesk-community-modules/tree/main/modules/proxmox",
+  "capabilities": {
+    "network": { "enabled": true, "hosts": [] },
+    "filesystem": { "write_paths": [] },
+    "subprocess": false,
+    "env": [],
+    "host": {
+      "http": {
+        "enabled": true,
+        "endpoints": [
+          {
+            "id": "proxmox",
+            "base_url": "https://your-proxmox:8006/api2/json",
+            "auth": {
+              "type": "header",
+              "header": "Authorization",
+              "secret_ref": "PROXMOX_TOKEN",
+              "format": "PVEAPIToken={value}"
+            },
+            "methods": ["GET", "POST"],
+            "verify_tls": false
+          }
+        ]
+      }
+    }
+  },
+  "secrets_required": [
+    {
+      "key": "PROXMOX_TOKEN",
+      "description": "Proxmox API token, the FULL string user@realm!tokenid=secret (create under Datacenter > Permissions > API Tokens).",
+      "required": true
+    }
+  ],
+  "frontend": {
+    "nav": { "label": "Proxmox", "icon": "server", "view": "proxmox.html" }
+  }
+}
