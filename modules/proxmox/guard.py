@@ -13,7 +13,16 @@ from __future__ import annotations
 from . import state
 
 # Actions that can take the dashboard down if aimed at its own guest/node.
-DESTRUCTIVE = {"stop", "shutdown", "reboot"}
+# `delete` joins the power-down set once provisioning lands.
+DESTRUCTIVE = {"stop", "shutdown", "reboot", "delete"}
+
+# Which PVE capability class an action needs. A learned denial (state.caps_denied)
+# gates only its own class, so a power-only token still provisions nothing while a
+# read-only auditor token still can't power, without one blunt global switch.
+CAP_OF = {
+    "start": "power", "stop": "power", "shutdown": "power", "reboot": "power",
+    "create": "allocate", "clone": "allocate", "delete": "allocate",
+}
 
 
 def is_self_guest(settings: dict, node: str, gtype: str, vmid: int) -> bool:
@@ -29,14 +38,32 @@ def is_self_node(settings: dict, node: str) -> bool:
     return bool(settings.get("self_node")) and settings.get("self_node") == node
 
 
-async def check_power(node: str, gtype: str, vmid: int, action: str) -> tuple[bool, str]:
-    """(allowed, reason). reason is non-empty only on refusal (for the 403 + audit)."""
+async def check_action(node: str, gtype: str, vmid: int | None, action: str) -> tuple[bool, str]:
+    """(allowed, reason). reason is non-empty only on refusal (for the 403 + audit).
+
+    Covers power AND provisioning actions. create/clone are not aimed at an
+    existing guest (vmid may be None), so the self-guard skips them; only
+    read-only + a learned `allocate` denial gate them.
+    """
     settings = await state.get_settings()
     if settings.get("read_only"):
         return False, "read-only mode is enabled"
-    if action in DESTRUCTIVE and is_self_guest(settings, node, gtype, vmid):
-        return False, "this is the dashboard's own guest; power-cycle it from the Proxmox console"
+    cap = CAP_OF.get(action)
+    if cap and cap in settings.get("caps_denied", []):
+        return False, f"this Proxmox token lacks {cap} rights"
+    if (
+        action in DESTRUCTIVE
+        and vmid is not None
+        and is_self_guest(settings, node, gtype, int(vmid))
+    ):
+        verb = "delete" if action == "delete" else "power-cycle"
+        return False, f"this is the dashboard's own guest; {verb} it from the Proxmox console"
     return True, ""
+
+
+async def check_power(node: str, gtype: str, vmid: int, action: str) -> tuple[bool, str]:
+    """Back-compat alias for the power path."""
+    return await check_action(node, gtype, vmid, action)
 
 
 async def annotate_self(settings: dict, nodes: list[dict], guests: list[dict]) -> None:

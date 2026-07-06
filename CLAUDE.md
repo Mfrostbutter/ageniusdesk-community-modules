@@ -44,7 +44,7 @@ replacement.
 | id | What it is |
 |---|---|
 | `youtube-research` | YouTube link -> caption transcript -> LLM breakdown filed into the notes vault. |
-| `proxmox` | Read-first Proxmox VE cluster view (nodes, VMs, LXCs) with gated guest power actions; token injected host-side. |
+| `proxmox` | Read-first Proxmox VE cluster view (nodes, VMs, LXCs) with cluster resource stats, gated guest power actions, and gated provisioning (create/clone/delete); token injected host-side. |
 
 ## Conventions
 

@@ -7,7 +7,10 @@
         dashboard's own guest is protected.
       </p>
     </div>
-    <button id="pmx-settings-toggle" type="button" class="btn" style="cursor:pointer;font-size:12px;padding:6px 12px;border:1px solid var(--border-dim);border-radius:var(--radius);background:var(--bg-panel);color:var(--text-secondary)">Settings</button>
+    <div style="display:flex;gap:8px">
+      <button id="pmx-create-toggle" type="button" class="btn" style="cursor:pointer;font-size:12px;padding:6px 12px;border:1px solid var(--border-dim);border-radius:var(--radius);background:var(--accent,#60a5fa);color:#fff">New guest</button>
+      <button id="pmx-settings-toggle" type="button" class="btn" style="cursor:pointer;font-size:12px;padding:6px 12px;border:1px solid var(--border-dim);border-radius:var(--radius);background:var(--bg-panel);color:var(--text-secondary)">Settings</button>
+    </div>
   </div>
 
   <div id="pmx-readonly-banner" style="display:none;background:#fbbf2418;border:1px solid #fbbf2455;color:#fbbf24;border-radius:var(--radius);padding:8px 12px;font-size:12px;margin-bottom:14px">
@@ -33,7 +36,13 @@
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
       <input id="pmx-readonly" type="checkbox"> Read-only mode (disable all power actions)
     </label>
+    <button id="pmx-clear-denied" type="button" class="btn" style="display:none;margin-top:12px;cursor:pointer;font-size:12px;padding:6px 12px;border:1px solid var(--border-dim);border-radius:var(--radius);background:var(--bg-panel);color:var(--text-secondary)">Clear learned permission denials</button>
   </div>
 
   <div id="pmx-body"><div class="spinner"></div></div>
+</div>
+
+<!-- Modal overlay for the create wizard, clone, and delete-confirm dialogs. -->
+<div id="pmx-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9999;padding:24px;overflow-y:auto">
+  <div id="pmx-modal-card" style="max-width:560px;margin:24px auto;background:var(--bg-panel,#1a1a1a);border:1px solid var(--border-dim);border-radius:var(--radius);padding:20px 22px"></div>
 </div>

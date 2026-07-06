@@ -40,6 +40,45 @@ def test_other_guest_is_allowed():
     asyncio.run(go())
 
 
+def test_delete_on_self_guest_refused():
+    async def go():
+        await state.save_settings(read_only=False, self_node="pve1", self_vmid=213, self_type="lxc", caps_denied=[])
+        allowed, reason = await guard.check_action("pve1", "lxc", 213, "delete")
+        assert not allowed and "own guest" in reason
+    asyncio.run(go())
+
+
+def test_create_and_clone_bypass_self_guard():
+    async def go():
+        # create/clone are not aimed at an existing guest; self-guard must not fire.
+        await state.save_settings(read_only=False, self_node="pve1", self_vmid=213, self_type="lxc", caps_denied=[])
+        for action in ("create", "clone"):
+            allowed, _ = await guard.check_action("pve1", "lxc", None, action)
+            assert allowed
+    asyncio.run(go())
+
+
+def test_capability_denial_is_per_class():
+    async def go():
+        # A learned 'allocate' denial blocks create/clone/delete but NOT power.
+        await state.save_settings(read_only=False, self_node="", self_vmid=None, self_type="", caps_denied=["allocate"])
+        allowed, reason = await guard.check_action("pve1", "qemu", 9001, "create")
+        assert not allowed and "allocate" in reason
+        allowed, _ = await guard.check_action("pve1", "qemu", 100, "start")
+        assert allowed
+    asyncio.run(go())
+
+
+def test_add_denied_cap_is_idempotent_and_bounded():
+    async def go():
+        await state.save_settings(caps_denied=[])
+        assert await state.add_denied_cap("power") == ["power"]
+        assert await state.add_denied_cap("power") == ["power"]           # idempotent
+        assert set(await state.add_denied_cap("allocate")) == {"allocate", "power"}
+        assert await state.add_denied_cap("bogus") == ["allocate", "power"]  # unknown ignored
+    asyncio.run(go())
+
+
 def test_annotate_self_marks_guest_and_node():
     async def go():
         settings = await state.save_settings(read_only=False, self_node="pve1", self_vmid=213, self_type="lxc")

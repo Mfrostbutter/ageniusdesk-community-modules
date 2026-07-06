@@ -21,12 +21,18 @@ import aiosqlite
 _DB_PATH = Path(os.environ.get("AGD_MODULE_DATA_DIR") or "data/modules/proxmox/_data") / "state.db"
 
 _CREATE_SETTINGS = """CREATE TABLE IF NOT EXISTS settings (
-    id         INTEGER PRIMARY KEY CHECK (id = 1),
-    self_node  TEXT NOT NULL DEFAULT '',
-    self_vmid  INTEGER,
-    self_type  TEXT NOT NULL DEFAULT '',
-    read_only  INTEGER NOT NULL DEFAULT 0
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    self_node   TEXT NOT NULL DEFAULT '',
+    self_vmid   INTEGER,
+    self_type   TEXT NOT NULL DEFAULT '',
+    read_only   INTEGER NOT NULL DEFAULT 0,
+    caps_denied TEXT NOT NULL DEFAULT ''
 )"""
+
+# Capabilities the token has been observed to lack (learned from a 403), stored
+# comma-separated. Distinct from read_only (an operator master switch): a denial
+# disables only the actions in that capability class, not the whole module.
+_CAPS = ("power", "allocate")
 
 _CREATE_AUDIT = """CREATE TABLE IF NOT EXISTS audit (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,6 +62,11 @@ async def _connect() -> aiosqlite.Connection:
         await db.execute(_CREATE_SETTINGS)
         await db.execute(_CREATE_AUDIT)
         await db.execute("INSERT OR IGNORE INTO settings (id) VALUES (1)")
+        # Migrate a pre-v2 settings table that predates caps_denied.
+        try:
+            await db.execute("ALTER TABLE settings ADD COLUMN caps_denied TEXT NOT NULL DEFAULT ''")
+        except aiosqlite.OperationalError:
+            pass  # column already exists
         await db.commit()
         _ready = True
     return db
@@ -64,26 +75,34 @@ async def _connect() -> aiosqlite.Connection:
 # ── settings (self-guest + read-only) ─────────────────────────────────────────
 
 
+def _split_caps(raw: str | None) -> list[str]:
+    return sorted({c for c in (raw or "").split(",") if c in _CAPS})
+
+
 async def get_settings() -> dict[str, Any]:
     db = await _connect()
     try:
-        cur = await db.execute("SELECT self_node, self_vmid, self_type, read_only FROM settings WHERE id = 1")
+        cur = await db.execute(
+            "SELECT self_node, self_vmid, self_type, read_only, caps_denied FROM settings WHERE id = 1"
+        )
         row = await cur.fetchone()
     finally:
         await db.close()
     if row is None:
-        return {"self_node": "", "self_vmid": None, "self_type": "", "read_only": False}
+        return {"self_node": "", "self_vmid": None, "self_type": "", "read_only": False, "caps_denied": []}
     return {
         "self_node": row["self_node"] or "",
         "self_vmid": row["self_vmid"],
         "self_type": row["self_type"] or "",
         "read_only": bool(row["read_only"]),
+        "caps_denied": _split_caps(row["caps_denied"]),
     }
 
 
 async def save_settings(
     *, self_node: str | None = None, self_vmid: int | None = None,
     self_type: str | None = None, read_only: bool | None = None,
+    caps_denied: list[str] | None = None,
 ) -> dict[str, Any]:
     current = await get_settings()
     merged = {
@@ -91,17 +110,32 @@ async def save_settings(
         "self_vmid": current["self_vmid"] if self_vmid is None else self_vmid,
         "self_type": current["self_type"] if self_type is None else self_type,
         "read_only": current["read_only"] if read_only is None else bool(read_only),
+        "caps_denied": current["caps_denied"] if caps_denied is None
+        else sorted({c for c in caps_denied if c in _CAPS}),
     }
     db = await _connect()
     try:
         await db.execute(
-            "UPDATE settings SET self_node = ?, self_vmid = ?, self_type = ?, read_only = ? WHERE id = 1",
-            (merged["self_node"], merged["self_vmid"], merged["self_type"], 1 if merged["read_only"] else 0),
+            "UPDATE settings SET self_node = ?, self_vmid = ?, self_type = ?, read_only = ?, caps_denied = ? "
+            "WHERE id = 1",
+            (merged["self_node"], merged["self_vmid"], merged["self_type"],
+             1 if merged["read_only"] else 0, ",".join(merged["caps_denied"])),
         )
         await db.commit()
     finally:
         await db.close()
     return merged
+
+
+async def add_denied_cap(cap: str) -> list[str]:
+    """Record that the token lacks `cap` (learned from a 403). Idempotent."""
+    if cap not in _CAPS:
+        return (await get_settings())["caps_denied"]
+    current = await get_settings()
+    if cap in current["caps_denied"]:
+        return current["caps_denied"]
+    merged = await save_settings(caps_denied=[*current["caps_denied"], cap])
+    return merged["caps_denied"]
 
 
 # ── audit (every power attempt, including refusals) ───────────────────────────

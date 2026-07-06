@@ -21,7 +21,8 @@ def test_get_cluster_parses_rollup(monkeypatch):
                 {"type": "storage", "storage": "local"},  # non-guest, ignored
             ],
             "/nodes": [
-                {"node": "pve1", "status": "online", "cpu": 0.2, "mem": 4 << 30, "maxmem": 8 << 30, "uptime": 9000},
+                {"node": "pve1", "status": "online", "cpu": 0.2, "maxcpu": 8,
+                 "mem": 4 << 30, "maxmem": 8 << 30, "disk": 40 << 30, "maxdisk": 100 << 30, "uptime": 9000},
             ],
             "/cluster/status": [{"type": "cluster", "quorate": 1}],
         }
@@ -31,7 +32,12 @@ def test_get_cluster_parses_rollup(monkeypatch):
     c = asyncio.run(client.get_cluster())
     assert c["reachable"] is True
     assert c["quorate"] is True
-    assert c["totals"] == {"nodes": 1, "nodes_online": 1, "guests": 2, "running": 1, "stopped": 1}
+    t = c["totals"]
+    assert (t["nodes"], t["nodes_online"], t["guests"], t["running"], t["stopped"]) == (1, 1, 2, 1, 1)
+    assert t["cores"] == 8
+    assert t["cpu_pct"] == 20                       # weighted: 0.2 * 8 / 8
+    assert t["mem"]["pct"] == 50
+    assert t["disk"]["pct"] == 40
     web = next(g for g in c["guests"] if g["vmid"] == 100)
     assert web["cpu_pct"] == 12
     assert web["mem"]["pct"] == 50

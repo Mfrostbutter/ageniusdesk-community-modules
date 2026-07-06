@@ -28,7 +28,7 @@
               "secret_ref": "PROXMOX_TOKEN",
               "format": "PVEAPIToken={value}"
             },
-            "methods": ["GET", "POST"],
+            "methods": ["GET", "POST", "DELETE"],
             "verify_tls": false
           }
         ]
