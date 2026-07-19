@@ -290,6 +290,17 @@ document.addEventListener('click', async (e) => {
     } catch (err) { window.AgeniusDesk?.notify(err.message, 'error'); }
     return;
   }
+  if (t.closest('#ytr-test')) {
+    const btn = $('ytr-test');
+    if (btn) { btn.disabled = true; btn.textContent = 'Testing…'; }
+    try {
+      const res = await jpost(`${API}/test-model`, { model: encodeModel() });
+      if (res.ok) window.AgeniusDesk?.notify('Model works.', 'success');
+      else window.AgeniusDesk?.notify(`Model test failed: ${res.error}`, 'error');
+    } catch (err) { window.AgeniusDesk?.notify(`Model test failed: ${err.message}`, 'error'); }
+    finally { if (btn) { btn.disabled = false; btn.textContent = 'Test'; } }
+    return;
+  }
   if (t.closest('#ytr-run')) return void runJob();
 
   const card = t.closest('.ytr-card');

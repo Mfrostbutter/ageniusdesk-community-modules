@@ -77,6 +77,27 @@ async def get_config():
     return {"default_engine": "captions", "engines": ["captions"]}
 
 
+class TestModel(BaseModel):
+    model: str = Field(default="", description="Model spec to test: '' = saved default, or 'provider::model'.")
+
+
+@router.post("/test-model")
+async def test_model(req: TestModel):
+    """One tiny tool-free completion through the same path a research run uses
+    (the host bridge under isolation), so a green check here means the actual
+    breakdown call will work with this provider/model too."""
+    try:
+        text = await complete(
+            "You are a connectivity check.",
+            "Reply with the single word: ok",
+            max_tokens=200,
+            model=req.model.strip(),
+        )
+    except LLMError as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True, "response": (text or "").strip()[:80]}
+
+
 @router.get("/folders")
 async def list_folders(path: str = Query(default="")):
     await artifacts.ensure_taxonomy()
