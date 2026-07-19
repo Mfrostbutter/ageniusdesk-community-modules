@@ -5,7 +5,10 @@
  * markdown, deep dive, download, delete, move, destination picker) but runs as a
  * community view: AgeniusDesk injects research.html and loads this script ONCE,
  * so behavior is bound via document-level delegation and a MutationObserver
- * (re)mounts when the view appears. No WebSocket; in-flight jobs are polled.
+ * (re)mounts when the view appears. No WebSocket; the view polls while mounted
+ * (2.5s while a job is in flight, 5s idle) and re-renders only when the jobs
+ * actually changed, so finished runs appear without a click and idle polls
+ * don't churn the detail pane.
  */
 
 const API = '/api/youtube-research';
@@ -119,6 +122,17 @@ async function loadDestinations() {
 
 // ── Jobs ─────────────────────────────────────────────────────────────────────
 
+let _lastRenderSig = null;
+
+// What the poll compares to decide whether anything visible changed. Covers
+// status/progress transitions, a breakdown or deep dive arriving, errors, and
+// jobs appearing or vanishing (including ones created outside this view).
+function _renderSig() {
+  return _selectedId + '|' + _jobs.map(j =>
+    `${j.id}:${j.status}:${j.progress || ''}:${j.breakdown_md ? 1 : 0}:${j.deepdive_md ? 1 : 0}:${(j.error || '').length}`
+  ).join(',');
+}
+
 async function loadJobs() {
   try {
     const fresh = (await jget(`${API}/jobs`)).jobs || [];
@@ -133,8 +147,7 @@ async function loadJobs() {
       }
       return j;
     });
-    renderList();
-    if (!_selectedId && _jobs.length) { await selectJob(_jobs[0].id); return; }
+    if (!_selectedId && _jobs.length) { renderList(); await selectJob(_jobs[0].id); return; }
     // The list response strips bodies, so the selected job's detail needs its
     // FULL record. Re-fetch it when its status changed since the last poll (a
     // finished breakdown or deep dive) or when we never loaded its body — so the
@@ -151,7 +164,15 @@ async function loadJobs() {
         if (idx >= 0) _jobs[idx] = full;
       } catch { /* keep the list version */ }
     }
-    await renderDetail();
+    // Re-render only when something visible changed: the poll now runs even
+    // when idle, and an unconditional innerHTML rebuild every tick would reset
+    // scroll position and text selection in the detail pane.
+    const sig = _renderSig();
+    if (sig !== _lastRenderSig) {
+      _lastRenderSig = sig;
+      renderList();
+      await renderDetail();
+    }
   } catch { /* ignore */ }
 }
 
@@ -182,6 +203,7 @@ async function selectJob(id) {
     if (idx >= 0) _jobs[idx] = full; else _jobs.unshift(full);
   } catch { /* keep list version */ }
   await renderDetail();
+  _lastRenderSig = _renderSig();  // this render is current; don't repeat it next poll
 }
 
 function detailHeader(job) {
@@ -257,12 +279,18 @@ async function runJob() {
   }
 }
 
+// The poll runs for the whole life of the view (a fresh iframe per render means
+// it dies naturally on navigation): finished jobs and jobs created outside this
+// view must show up without a click. Every tick while a job is in flight;
+// every other tick (5s) when idle.
+let _tick = 0;
 function startPolling() {
   if (_poll) return;
   _poll = setInterval(async () => {
     if (!$('ytr-root')) { stopPolling(); return; }
+    _tick++;
+    if (!inflight() && _tick % 2) return;
     await loadJobs();
-    if (!inflight()) stopPolling();
   }, 2500);
 }
 function stopPolling() { if (_poll) { clearInterval(_poll); _poll = null; } }
@@ -352,7 +380,7 @@ async function mount() {
   await initProviderModel();
   await loadDestinations();
   await loadJobs();
-  if (inflight()) startPolling();
+  startPolling();
 }
 
 const _obs = new MutationObserver(() => {
