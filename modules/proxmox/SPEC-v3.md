@@ -641,7 +641,7 @@ export_flat.py      JSON and CSV ZIP
 router.py           existing routes plus inventory API
 client.py           typed PVE reads plus existing mutations
 static/proxmox.html tab shell and dialogs
-static/proxmox.js   view state, filters, pagination, detail drawer, jobs
+static/module.js     view state, filters, pagination, detail drawer, jobs
 tests/              unit, route, export, and contract tests
 ```
 
