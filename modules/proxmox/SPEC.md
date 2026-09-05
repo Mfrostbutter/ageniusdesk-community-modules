@@ -1,7 +1,11 @@
 # Proxmox module — v2 spec (provisioning + cluster stats)
 
-Status: draft. Extends the shipped v1 (read-first + guest power actions). This
-doc is the build contract; the README stays operator-facing.
+Status: shipped. Extends the shipped v1 (read-first + guest power actions). This
+doc is the v2 build contract; the README stays operator-facing. The proposed v3
+inventory, health, capacity, and export work is specified in
+[SPEC-v3.md](SPEC-v3.md).
+
+Note (2026-09-05): the `http.request` host bridge shipped in CE 0.6.0. The in-process compatibility path described below is retired; see SPEC-v3 Phase 0.
 
 ## Goal
 

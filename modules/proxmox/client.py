@@ -179,7 +179,10 @@ async def guest_power(node: str, gtype: str, vmid: int, action: str) -> dict:
     if gtype not in _GUEST_KIND or action not in _ACTIONS:
         return {"ok": False, "status": 400, "detail": f"invalid guest/action {gtype}/{action}"}
     path = f"/nodes/{node}/{_GUEST_KIND[gtype]}/{vmid}/status/{action}"
-    resp = await _host.http_request(ENDPOINT, method="POST", path=path)
+    try:
+        resp = await _host.http_request(ENDPOINT, method="POST", path=path)
+    except _host.HostError as e:
+        return _host_refusal(e)
     status = resp.get("status", 0)
     ok = 200 <= status < 300
     detail = "" if ok else (resp.get("body") or "")[:300]
@@ -192,6 +195,12 @@ async def guest_power(node: str, gtype: str, vmid: int, action: str) -> dict:
 # and the work runs in the background. Callers surface the UPID and poll
 # `task_status` to completion. Mutating results share the {ok,status,detail,data}
 # shape; `data` is the UPID on success.
+
+
+def _host_refusal(e: _host.HostError) -> dict:
+    """The HOST refused the call (method not granted, endpoint pending, bad
+    path). status=0 marks it as a host policy result, not an upstream status."""
+    return {"ok": False, "status": 0, "detail": str(e)[:300], "data": None}
 
 
 def _result(resp: dict) -> dict:
@@ -213,10 +222,13 @@ async def _post_form(path: str, form: dict) -> dict:
     portable PVE contract and forwards verbatim through both transports."""
     payload = {k: v for k, v in form.items() if v is not None and v != ""}
     body = urllib.parse.urlencode(payload)
-    resp = await _host.http_request(
-        ENDPOINT, method="POST", path=path,
-        headers={"Content-Type": "application/x-www-form-urlencoded"}, body=body,
-    )
+    try:
+        resp = await _host.http_request(
+            ENDPOINT, method="POST", path=path,
+            headers={"Content-Type": "application/x-www-form-urlencoded"}, body=body,
+        )
+    except _host.HostError as e:
+        return _host_refusal(e)
     return _result(resp)
 
 
@@ -367,9 +379,12 @@ async def delete_guest(node: str, gtype: str, vmid: int) -> dict:
     query: dict[str, Any] = {"purge": 1}
     if gtype == "qemu":
         query["destroy-unreferenced-disks"] = 1
-    resp = await _host.http_request(
-        ENDPOINT, method="DELETE", path=f"/nodes/{node}/{gtype}/{vmid}", query=query,
-    )
+    try:
+        resp = await _host.http_request(
+            ENDPOINT, method="DELETE", path=f"/nodes/{node}/{gtype}/{vmid}", query=query,
+        )
+    except _host.HostError as e:
+        return _host_refusal(e)
     return _result(resp)
 
 

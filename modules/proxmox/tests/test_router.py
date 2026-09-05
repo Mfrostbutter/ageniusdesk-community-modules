@@ -113,3 +113,55 @@ def test_create_vm_success_returns_upid(monkeypatch):
         out = await prouter.create_vm("pve1", prouter.VMCreate(vmid=9001, storage="local-lvm", disk_gb=8), _req())
         assert out["ok"] and out["upid"] == "UPID:create"
     asyncio.run(go())
+
+
+# ── trusted identity + role defense-in-depth ─────────────────────────────────
+
+
+def _req_as(user, role):
+    return SimpleNamespace(headers={"x-agd-user": user, "x-agd-role": role})
+
+
+def test_viewer_role_header_refused_before_guard(monkeypatch):
+    async def go():
+        await _reset()
+        hit = {"power": False}
+
+        async def fake_power(*a, **k):
+            hit["power"] = True
+            return {"ok": True, "status": 200, "data": "UPID"}
+
+        monkeypatch.setattr(client, "guest_power", fake_power)
+        with pytest.raises(HTTPException) as ei:
+            await prouter.power_guest("pve1", "qemu", 100, "start", _req_as("alice", "viewer"))
+        assert ei.value.status_code == 403
+        assert hit["power"] is False
+    asyncio.run(go())
+
+
+def test_operator_action_is_audited_as_stamped_user(monkeypatch):
+    async def go():
+        await _reset()
+
+        async def fake_power(*a, **k):
+            return {"ok": True, "status": 200, "data": "UPID:1"}
+
+        monkeypatch.setattr(client, "guest_power", fake_power)
+        out = await prouter.power_guest("pve1", "qemu", 100, "start", _req_as("bob", "operator"))
+        assert out["ok"] is True
+        rows = await state.list_audit(5)
+        assert rows[0]["actor"] == "bob" and rows[0]["action"] == "start"
+    asyncio.run(go())
+
+
+def test_settings_include_host_grant(monkeypatch):
+    async def go():
+        await _reset()
+
+        async def fake_grant(endpoint):
+            return {"status": "active", "methods": ["GET", "HEAD"], "host": "https://pve:8006", "mutating": False}
+
+        monkeypatch.setattr(prouter._host, "http_grant", fake_grant)
+        s = await prouter.get_settings()
+        assert s["grant"]["mutating"] is False and s["read_only"] is False
+    asyncio.run(go())

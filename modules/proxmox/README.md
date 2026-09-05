@@ -27,15 +27,24 @@ nodes, VMs, and LXCs with live status and health, cluster-wide resource stats, p
 
 ## Credentials & isolation
 
-The module holds **no credential in the worker**. It declares one `http.request`
-endpoint (`proxmox`) in its manifest; the AgeniusDesk host injects your API token
-host-side per call (the `http.request` bridge). Under container/subprocess isolation
-the token never enters the module process.
+The module holds **no credential** and opens **no direct connection**. It declares
+one `http.request` endpoint (`proxmox`) in its manifest; the AgeniusDesk host (0.6.0
+or later) owns the base URL, injects your API token per call, decides the TLS
+policy, and dials only the address it pinned at consent time. This is the same host
+code path in `in_process`, `subprocess`, and `container` mode, so the token never
+enters module code in any of them.
+
+At install the consent modal asks you to confirm the endpoint's base URL and whether
+the module may **change data** (POST/DELETE). Leave that off for a read-only install:
+the host then rejects every mutating call at the bridge, and the module hides its
+power and provisioning controls. You can widen or reduce the grant later under
+Settings > Modules > Upstream endpoints. Actions are attributed to the logged-in
+AgeniusDesk user (host-stamped identity); viewers can read, operators can act.
 
 **Setup:** create a Proxmox API token (Datacenter → Permissions → API Tokens) and
 store the **full** string `user@realm!tokenid=secret` as the `PROXMOX_TOKEN` secret
-(not just the UUID half — that is the common cause of 401s). Point the endpoint's
-`base_url` at your console, e.g. `https://10.0.0.20:8006/api2/json`. Proxmox uses a
+(not just the UUID half, which is the common cause of 401s). Point the endpoint's
+base URL at your console, e.g. `https://10.0.0.20:8006/api2/json`. Proxmox uses a
 self-signed cert by default, so the endpoint ships with `verify_tls: false`.
 
 Least-privilege, by capability. A `PVEAuditor` token gives a read-only install. Add:
@@ -63,8 +72,10 @@ disk resize/move, snapshots, live migration between nodes, and node power (reboo
 shutdown a whole node, left to the console). One cluster per install. Snapshots and
 migrate are the likely next additions.
 
-See [SPEC.md](SPEC.md) for the provisioning design (API surface, PVE param
-assembly, the per-capability permission model, and async task handling).
+See [SPEC.md](SPEC.md) for the shipped provisioning design (API surface, PVE
+parameter assembly, the per-capability permission model, and async task handling).
+The proposed inventory-first v3, informed by PVEViewer, is in
+[SPEC-v3.md](SPEC-v3.md).
 
 ## Fleet Health
 

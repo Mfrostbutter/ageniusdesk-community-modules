@@ -14,7 +14,7 @@ const API = '/api/proxmox';
 const POLL_MS = 5000;
 
 let _poll = null;
-let _settings = { read_only: false, self_node: '', self_vmid: null, self_type: '', caps_denied: [] };
+let _settings = { read_only: false, self_node: '', self_vmid: null, self_type: '', caps_denied: [], grant: null };
 let _nodes = [];                 // last-known node names, for the picker selects
 const _optCache = {};            // node -> provision-options (storage/iso/tmpl/bridge)
 
@@ -44,8 +44,11 @@ function fmtUptime(s) {
   return d ? `${d}d ${h}h` : `${h}h`;
 }
 
-function canPower() { return !_settings.read_only && !(_settings.caps_denied || []).includes('power'); }
-function canAllocate() { return !_settings.read_only && !(_settings.caps_denied || []).includes('allocate'); }
+// Host grant: when the operator granted a read-only endpoint, the host rejects
+// every POST/DELETE at the bridge, so hide the controls up front.
+function grantMutating() { return !_settings.grant || _settings.grant.mutating !== false; }
+function canPower() { return grantMutating() && !_settings.read_only && !(_settings.caps_denied || []).includes('power'); }
+function canAllocate() { return grantMutating() && !_settings.read_only && !(_settings.caps_denied || []).includes('allocate'); }
 
 // ── cluster stats row ─────────────────────────────────────────────────────────
 
@@ -116,7 +119,7 @@ function guestRow(g) {
     parts.push(btn('pmx-clone', ds, 'Clone', false));
     if (!running && !g.is_self) parts.push(btn('pmx-del', ds, 'Delete', true));
   }
-  if (!parts.length && _settings.read_only) parts.push('<span style="font-size:11px;opacity:0.5">read-only</span>');
+  if (!parts.length && (_settings.read_only || !grantMutating())) parts.push('<span style="font-size:11px;opacity:0.5">read-only</span>');
   return `<tr style="border-top:1px solid var(--border-dim)">
     <td style="padding:6px 8px"><span style="width:7px;height:7px;border-radius:50%;background:${dot};display:inline-block;margin-right:6px"></span>${esc(g.name || '(unnamed)')}</td>
     <td style="padding:6px 8px;color:var(--text-secondary);font-size:12px">${esc(kind)} ${esc(g.vmid)}</td>

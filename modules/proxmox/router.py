@@ -16,7 +16,10 @@
 
 Read-first. Every mutating action passes the SERVER-SIDE guard (read-only,
 per-capability denial, self-guest protection) before any bridge call; the guard
-refusal AND the upstream result are both audited. An upstream 403 marks only that
+refusal AND the upstream result are both audited. Identity comes from the host's
+trusted X-AGD-User / X-AGD-Role headers (the host strips anything a browser sends
+and authorizes by route class before this code runs); the role check here is
+defense-in-depth, never the gate. An upstream 403 marks only that
 action's capability (power vs allocate) as denied, so a partial-privilege token
 degrades gracefully instead of locking the whole module.
 """
@@ -32,22 +35,27 @@ from . import _host, client, guard, state
 
 logger = logging.getLogger(__name__)
 
-if _host.ISOLATED:
-    _ROUTE_DEPS: list = []
-else:
-    from backend.auth_gate import require_trusted_request
-    from fastapi import Depends
-    _ROUTE_DEPS = [Depends(require_trusted_request)]
-
-router = APIRouter(prefix="/api/proxmox", tags=["proxmox"], dependencies=_ROUTE_DEPS)
+# No host auth dependency here: the host authenticates, CSRF-checks, and
+# authorizes every /api/proxmox/* request by route class BEFORE it reaches this
+# router, in every isolation mode, and stamps the trusted identity headers.
+router = APIRouter(prefix="/api/proxmox", tags=["proxmox"])
 
 _GTYPES = {"qemu", "lxc"}
 _ACTIONS = {"start", "stop", "shutdown", "reboot"}
+_ROLE_ORDER = {"viewer": 1, "operator": 2, "admin": 3}
 
 
 def _actor(request: Request) -> str:
-    # The host proxy MAY forward a minimal role header; default to 'operator'.
-    return request.headers.get("x-agd-user") or "operator"
+    # Trusted, host-stamped identity (a browser cannot set this header).
+    return request.headers.get("x-agd-user") or "unknown"
+
+
+def _require_operator(request: Request) -> None:
+    """Defense-in-depth: the host already refused a viewer at the route class;
+    refuse again here so a misconfigured host can never reach a mutation."""
+    role = (request.headers.get("x-agd-role") or "").lower()
+    if role and _ROLE_ORDER.get(role, 0) < _ROLE_ORDER["operator"]:
+        raise HTTPException(status_code=403, detail="operator role required")
 
 
 async def _finish_mutation(
@@ -78,20 +86,31 @@ async def _finish_mutation(
     reason = (result.get("detail") or f"HTTP {result['status']}")[:200]
     await state.add_audit(actor=actor, node=node, vmid=vmid, gtype=gtype,
                           action=action, result="failed", reason=reason)
+    if result["status"] == 0:
+        # Host policy refusal (e.g. read-only endpoint grant), not a Proxmox answer.
+        raise HTTPException(status_code=502, detail=f"host refused the {action}: {reason}")
     raise HTTPException(status_code=502, detail=f"Proxmox rejected the {action} (HTTP {result['status']})")
+
+
+async def _settings_with_grant() -> dict:
+    """Settings plus the host grant summary, so the UI can hide controls the
+    operator did not grant (a read-only endpoint grant hides power/provision)."""
+    settings = await state.get_settings()
+    settings["grant"] = await _host.http_grant(client.ENDPOINT)
+    return settings
 
 
 @router.get("/cluster")
 async def get_cluster(request: Request):
     cluster = await client.get_cluster_cached()
-    settings = await state.get_settings()
+    settings = await _settings_with_grant()
     await guard.annotate_self(settings, cluster.get("nodes", []), cluster.get("guests", []))
     return {"cluster": cluster, "settings": settings}
 
 
 @router.get("/settings")
 async def get_settings():
-    return await state.get_settings()
+    return await _settings_with_grant()
 
 
 class SettingsPayload(BaseModel):
@@ -103,7 +122,8 @@ class SettingsPayload(BaseModel):
 
 
 @router.post("/settings")
-async def set_settings(payload: SettingsPayload):
+async def set_settings(payload: SettingsPayload, request: Request):
+    _require_operator(request)
     if payload.self_type is not None and payload.self_type not in ("", *_GTYPES):
         raise HTTPException(status_code=400, detail="self_type must be 'qemu', 'lxc', or empty")
     return await state.save_settings(
@@ -117,6 +137,7 @@ async def set_settings(payload: SettingsPayload):
 async def power_guest(node: str, gtype: str, vmid: int, action: str, request: Request):
     if gtype not in _GTYPES or action not in _ACTIONS:
         raise HTTPException(status_code=400, detail="invalid guest type or action")
+    _require_operator(request)
     actor = _actor(request)
 
     allowed, reason = await guard.check_power(node, gtype, vmid, action)
@@ -197,6 +218,7 @@ async def _refuse(actor, node, gtype, vmid, action, reason, code):
 
 @router.post("/provision/{node}/qemu")
 async def create_vm(node: str, payload: VMCreate, request: Request):
+    _require_operator(request)
     actor = _actor(request)
     allowed, reason = await guard.check_action(node, "qemu", payload.vmid, "create")
     if not allowed:
@@ -207,6 +229,7 @@ async def create_vm(node: str, payload: VMCreate, request: Request):
 
 @router.post("/provision/{node}/lxc")
 async def create_lxc(node: str, payload: LXCCreate, request: Request):
+    _require_operator(request)
     actor = _actor(request)
     allowed, reason = await guard.check_action(node, "lxc", payload.vmid, "create")
     if not allowed:
@@ -219,6 +242,7 @@ async def create_lxc(node: str, payload: LXCCreate, request: Request):
 async def clone_guest(node: str, gtype: str, vmid: int, payload: CloneReq, request: Request):
     if gtype not in _GTYPES:
         raise HTTPException(status_code=400, detail="invalid guest type")
+    _require_operator(request)
     actor = _actor(request)
     allowed, reason = await guard.check_action(node, gtype, None, "clone")
     if not allowed:
@@ -239,6 +263,7 @@ async def clone_guest(node: str, gtype: str, vmid: int, payload: CloneReq, reque
 async def delete_guest(node: str, gtype: str, vmid: int, payload: DeleteConfirm, request: Request):
     if gtype not in _GTYPES:
         raise HTTPException(status_code=400, detail="invalid guest type")
+    _require_operator(request)
     actor = _actor(request)
     if payload.confirm_vmid != vmid:
         await _refuse(actor, node, gtype, vmid, "delete", "confirm_vmid does not match the target vmid", 400)

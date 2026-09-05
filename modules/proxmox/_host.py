@@ -3,43 +3,31 @@
 The one place that knows whether we run sandboxed or in the host process:
 
   - ISOLATED (AGD_BRIDGE_URL set): every outbound Proxmox call goes through the
-    host `http.request` bridge. The worker names the operator-consented endpoint
-    id + a relative path; the HOST owns the base URL, the token, and the TLS
-    policy, and makes the authenticated call. The token never enters the worker.
-  - in_process (default install): there is no bridge, so this file replicates the
-    bridge's request logic locally — it reads its own manifest for the endpoint
-    config and resolves the token via the host secret store (backend.config).
+    host `http.request` bridge over loopback. The worker names the
+    operator-consented endpoint id + a relative path; the HOST owns the base URL,
+    the token, the TLS policy, and the pinned address.
+  - in_process: the same host implementation is called directly
+    (`backend.modules._runtime.http_bridge`). No manifest reading, no secret
+    store, no direct Proxmox connection from module code.
 
-Either way, callers use `http_request(...)` and get the same
-`{status, headers, body, truncated}` shape. This facade is Proxmox-agnostic; any
-future homelab module reuses it verbatim.
+Either way callers use `http_request(...)` and get the same
+`{status, headers, body, truncated[, content_encoding]}` shape, and
+`http_grant(...)` reports what the operator granted. This facade is
+Proxmox-agnostic; any homelab module can reuse it verbatim.
 """
 
 from __future__ import annotations
 
-import json
 import os
-from pathlib import Path
 from typing import Any
 
 import httpx
 
+MODULE_ID = "proxmox"
 ISOLATED = bool(os.environ.get("AGD_BRIDGE_URL"))
 _BRIDGE_URL = os.environ.get("AGD_BRIDGE_URL", "").rstrip("/")
 _BRIDGE_TOKEN = os.environ.get("AGD_BRIDGE_TOKEN", "")
-_TIMEOUT = 30.0
-_MAX_BYTES = 5_000_000
-
-# Kept in sync with the host bridge (backend/modules/_runtime/bridge.py).
-_FORBIDDEN_REQ_HEADERS = {
-    "authorization", "host", "cookie", "content-length",
-    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-    "te", "trailer", "transfer-encoding", "upgrade",
-}
-_RESP_HEADER_ALLOW = {
-    "content-type", "content-length", "content-encoding",
-    "etag", "last-modified", "retry-after",
-}
+_TIMEOUT = 35.0
 
 
 class HostError(RuntimeError):
@@ -49,122 +37,47 @@ class HostError(RuntimeError):
 # ── isolated transport (bridge) ───────────────────────────────────────────────
 
 
+def _bridge_detail(r: httpx.Response) -> str:
+    try:
+        return str(r.json().get("detail"))
+    except Exception:
+        return r.text[:200]
+
+
 async def _http_via_bridge(payload: dict) -> dict:
     headers = {"authorization": f"Bearer {_BRIDGE_TOKEN}"}
     async with httpx.AsyncClient(timeout=_TIMEOUT) as c:
         r = await c.post(f"{_BRIDGE_URL}/api/_host/http/request", json=payload, headers=headers)
     if r.status_code >= 400:
-        try:
-            detail = r.json().get("detail")
-        except Exception:
-            detail = r.text[:200]
-        raise HostError(f"http.request failed (HTTP {r.status_code}): {detail}")
+        raise HostError(f"http.request failed (HTTP {r.status_code}): {_bridge_detail(r)}")
     return r.json()
 
 
-# ── in_process transport (replicate the bridge locally) ───────────────────────
-
-_MANIFEST_CACHE: dict[str, Any] | None = None
-
-
-def _endpoint_config(endpoint_id: str) -> dict:
-    global _MANIFEST_CACHE
-    if _MANIFEST_CACHE is None:
-        _MANIFEST_CACHE = json.loads((Path(__file__).parent / "manifest.json").read_text(encoding="utf-8"))
-    endpoints = (
-        _MANIFEST_CACHE.get("capabilities", {}).get("host", {}).get("http", {}).get("endpoints", [])
-    )
-    for ep in endpoints:
-        if ep.get("id") == endpoint_id:
-            return ep
-    raise HostError(f"unknown or undeclared endpoint {endpoint_id!r}")
+async def _grant_via_bridge() -> list[dict]:
+    headers = {"authorization": f"Bearer {_BRIDGE_TOKEN}"}
+    async with httpx.AsyncClient(timeout=10.0) as c:
+        r = await c.get(f"{_BRIDGE_URL}/api/_host/http/endpoints", headers=headers)
+    if r.status_code >= 400:
+        raise HostError(f"http.endpoints failed (HTTP {r.status_code}): {_bridge_detail(r)}")
+    return list(r.json().get("endpoints") or [])
 
 
-def _validate_rel_path(path: str) -> str:
-    p = (path or "").strip()
-    if not p:
-        return ""
-    if "\x00" in p or "\\" in p or "://" in p or p.startswith("//"):
-        raise HostError("invalid path")
-    path_part = p.split("?", 1)[0].split("#", 1)[0]
-    if "@" in path_part or any(seg == ".." for seg in path_part.split("/")):
-        raise HostError("invalid path")
-    return p
-
-
-def _inject_auth(auth: dict, headers: dict, url: str) -> str:
-    atype = (auth.get("type") or "").lower()
-    if not atype:
-        return url
-    from backend.config import decrypt_value  # in_process only; imported lazily when auth is present
-
-    value = decrypt_value(f"${auth.get('secret_ref', '')}") if auth.get("secret_ref") else ""
-    if atype == "bearer":
-        headers["Authorization"] = f"Bearer {value}"
-    elif atype == "header":
-        fmt = auth.get("format") or "{value}"
-        headers[auth.get("header") or "Authorization"] = fmt.replace("{value}", value)
-    elif atype == "basic":
-        import base64
-        user = decrypt_value(f"${auth['user_ref']}") if auth.get("user_ref") else auth.get("user", "")
-        headers["Authorization"] = "Basic " + base64.b64encode(f"{user}:{value}".encode()).decode()
-    elif atype == "query":
-        import urllib.parse
-        sep = "&" if "?" in url else "?"
-        url = f"{url}{sep}{urllib.parse.urlencode({auth.get('param') or 'token': value})}"
-    return url
+# ── in_process transport (same host implementation, called directly) ─────────
 
 
 async def _http_in_process(payload: dict) -> dict:
-    import urllib.parse
-
-    ep = _endpoint_config(payload["endpoint"])
-    method = (payload.get("method") or "GET").upper()
-    allowed = {m.upper() for m in (ep.get("methods") or ["GET", "HEAD"])}
-    if method not in allowed:
-        raise HostError(f"method {method} not permitted on endpoint {ep.get('id')!r}")
-
-    base_url = (ep.get("base_url") or "").rstrip("/")
-    rel = _validate_rel_path(payload.get("path", ""))
-    url = base_url + ("/" + rel.lstrip("/") if rel else "")
-    if payload.get("query"):
-        qs = urllib.parse.urlencode({str(k): str(v) for k, v in payload["query"].items()})
-        if qs:
-            url += ("&" if "?" in url else "?") + qs
-
-    headers = {
-        str(k): str(v)
-        for k, v in (payload.get("headers") or {}).items()
-        if str(k).lower() not in _FORBIDDEN_REQ_HEADERS
-    }
-    url = _inject_auth(ep.get("auth") or {}, headers, url)
-
-    body = payload.get("body")
-    content = None
-    if isinstance(body, str):
-        content = body.encode("utf-8")
-    elif body is not None:
-        content = json.dumps(body).encode("utf-8")
-        headers.setdefault("Content-Type", "application/json")
+    from backend.modules._runtime import http_bridge  # host facade; the one permitted host import
 
     try:
-        async with httpx.AsyncClient(
-            verify=bool(ep.get("verify_tls", True)), timeout=_TIMEOUT, follow_redirects=False
-        ) as c:
-            resp = await c.request(method, url, headers=headers, content=content)
-            raw = resp.content
-    except httpx.HTTPError as e:
-        raise HostError(f"upstream request failed: {type(e).__name__}")
+        return await http_bridge.request(MODULE_ID, payload)
+    except http_bridge.HttpBridgeError as e:
+        raise HostError(f"http.request failed (HTTP {e.status}): {e.detail}")
 
-    truncated = len(raw) > _MAX_BYTES
-    raw = raw[:_MAX_BYTES]
-    try:
-        body_out: str = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        import base64
-        body_out = base64.b64encode(raw).decode("ascii")
-    out_headers = {k.lower(): v for k, v in resp.headers.items() if k.lower() in _RESP_HEADER_ALLOW}
-    return {"status": resp.status_code, "headers": out_headers, "body": body_out, "truncated": truncated}
+
+def _grant_in_process() -> list[dict]:
+    from backend.modules._runtime import http_bridge
+
+    return http_bridge.grant_summary(MODULE_ID)
 
 
 # ── public API ────────────────────────────────────────────────────────────────
@@ -183,10 +96,29 @@ async def http_request(
     Returns `{status, headers, body, truncated}` where `status` is the UPSTREAM
     HTTP status (a 404 from Proxmox is a normal return with status=404, not an
     exception). Raises HostError only on a bridge/transport failure or a policy
-    rejection (unknown endpoint, disallowed method, bad path).
+    rejection (unknown endpoint, method not granted, bad path, pending consent).
     """
     payload = {"endpoint": endpoint, "method": method, "path": path,
                "query": query, "headers": headers, "body": body}
     if ISOLATED:
         return await _http_via_bridge(payload)
     return await _http_in_process(payload)
+
+
+async def http_grant(endpoint: str) -> dict:
+    """What the operator granted on `endpoint`: `{status, methods, host, mutating}`.
+    Degrades to an empty grant (never raises) so the UI can still render."""
+    try:
+        eps = await _grant_via_bridge() if ISOLATED else _grant_in_process()
+    except Exception:
+        eps = []
+    for ep in eps:
+        if ep.get("id") == endpoint:
+            methods = [m.upper() for m in ep.get("methods") or []]
+            return {
+                "status": ep.get("status", "unknown"),
+                "methods": methods,
+                "host": ep.get("host", ""),
+                "mutating": any(m in ("POST", "PUT", "PATCH", "DELETE") for m in methods),
+            }
+    return {"status": "unknown", "methods": [], "host": "", "mutating": False}
