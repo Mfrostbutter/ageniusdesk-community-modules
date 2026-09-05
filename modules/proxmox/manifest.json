@@ -1,0 +1,85 @@
+{
+  "id": "proxmox",
+  "name": "Proxmox",
+  "version": "0.2.0",
+  "min_app_version": "0.6.0",
+  "description": "Connect a Proxmox VE cluster: read-first view of nodes, VMs, and LXCs with live status and health, plus gated start/stop/reboot and provisioning on guests. Holds no credentials and opens no direct connection: every Proxmox call goes through the host-owned http.request bridge.",
+  "author": "Agenius AI Labs",
+  "author_url": "https://ageniusailabs.com",
+  "repo": "Mfrostbutter/ageniusdesk-community-modules",
+  "license": "MIT",
+  "routes_prefix": "/api/proxmox",
+  "homepage": "https://github.com/Mfrostbutter/ageniusdesk-community-modules/tree/main/modules/proxmox",
+  "capabilities": {
+    "network": {
+      "enabled": false,
+      "hosts": []
+    },
+    "filesystem": {
+      "write_paths": []
+    },
+    "subprocess": false,
+    "env": [],
+    "host": {
+      "http": {
+        "enabled": true,
+        "endpoints": [
+          {
+            "id": "proxmox",
+            "base_url": "https://your-proxmox:8006/api2/json",
+            "auth": {
+              "type": "header",
+              "header": "Authorization",
+              "secret_ref": "PROXMOX_TOKEN",
+              "format": "PVEAPIToken={value}"
+            },
+            "methods": [
+              "GET",
+              "POST",
+              "DELETE"
+            ],
+            "verify_tls": false
+          }
+        ]
+      }
+    }
+  },
+  "secrets_required": [
+    {
+      "key": "PROXMOX_TOKEN",
+      "description": "Proxmox API token, the FULL string user@realm!tokenid=secret (create under Datacenter > Permissions > API Tokens).",
+      "required": true
+    }
+  ],
+  "frontend": {
+    "nav": {
+      "label": "Proxmox",
+      "icon": "server",
+      "view": "proxmox.html"
+    }
+  },
+  "routes": [
+    {
+      "pattern": "/api/proxmox/settings",
+      "methods": [
+        "POST"
+      ],
+      "min_role": "operator"
+    },
+    {
+      "pattern": "/api/proxmox/guests/*",
+      "methods": [
+        "POST",
+        "DELETE"
+      ],
+      "min_role": "operator"
+    },
+    {
+      "pattern": "/api/proxmox/provision/*",
+      "methods": [
+        "POST"
+      ],
+      "min_role": "operator"
+    }
+  ]
+}

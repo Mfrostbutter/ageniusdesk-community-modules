@@ -1,0 +1,48 @@
+<div id="pmx-root" style="padding:20px 24px;max-width:1400px;margin:0 auto">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:16px">
+    <div>
+      <h1 style="font-size:20px;font-weight:700;margin:0 0 4px">Proxmox</h1>
+      <p style="color:var(--text-secondary);font-size:13px;margin:0">
+        Nodes, VMs, and LXCs across your cluster. Read-first; power actions are gated and the
+        dashboard's own guest is protected.
+      </p>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button id="pmx-create-toggle" type="button" class="btn" style="cursor:pointer;font-size:12px;padding:6px 12px;border:1px solid var(--border-dim);border-radius:var(--radius);background:var(--accent,#60a5fa);color:#fff">New guest</button>
+      <button id="pmx-settings-toggle" type="button" class="btn" style="cursor:pointer;font-size:12px;padding:6px 12px;border:1px solid var(--border-dim);border-radius:var(--radius);background:var(--bg-panel);color:var(--text-secondary)">Settings</button>
+    </div>
+  </div>
+
+  <div id="pmx-readonly-banner" style="display:none;background:#fbbf2418;border:1px solid #fbbf2455;color:#fbbf24;border-radius:var(--radius);padding:8px 12px;font-size:12px;margin-bottom:14px">
+    Read-only mode is on. Power actions are disabled.
+  </div>
+
+  <div id="pmx-settings" style="display:none;background:var(--bg-panel);border:1px solid var(--border-dim);border-radius:var(--radius);padding:14px;margin-bottom:16px">
+    <div style="font-size:12px;text-transform:uppercase;letter-spacing:0.5px;opacity:0.6;margin-bottom:10px">Self-protection</div>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px">
+      If AgeniusDesk runs on this cluster, declare its guest so its power controls are disabled here
+      (power-cycle it from the Proxmox console instead).
+    </p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+      <input id="pmx-self-node" class="input" placeholder="node (e.g. pve1)" style="max-width:160px">
+      <select id="pmx-self-type" class="input" style="max-width:120px">
+        <option value="">type</option>
+        <option value="qemu">VM (qemu)</option>
+        <option value="lxc">LXC</option>
+      </select>
+      <input id="pmx-self-vmid" class="input" type="number" placeholder="vmid" style="max-width:110px">
+      <button id="pmx-self-save" type="button" class="btn" style="cursor:pointer;font-size:12px;padding:6px 12px;border:1px solid var(--border-dim);border-radius:var(--radius);background:var(--accent,#60a5fa);color:#fff">Save</button>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+      <input id="pmx-readonly" type="checkbox"> Read-only mode (disable all power actions)
+    </label>
+    <button id="pmx-clear-denied" type="button" class="btn" style="display:none;margin-top:12px;cursor:pointer;font-size:12px;padding:6px 12px;border:1px solid var(--border-dim);border-radius:var(--radius);background:var(--bg-panel);color:var(--text-secondary)">Clear learned permission denials</button>
+  </div>
+
+  <div id="pmx-body"><div class="spinner"></div></div>
+</div>
+
+<!-- Modal overlay for the create wizard, clone, and delete-confirm dialogs. -->
+<div id="pmx-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9999;padding:24px;overflow-y:auto">
+  <div id="pmx-modal-card" style="max-width:560px;margin:24px auto;background:var(--bg-panel,#1a1a1a);border:1px solid var(--border-dim);border-radius:var(--radius);padding:20px 22px"></div>
+</div>
