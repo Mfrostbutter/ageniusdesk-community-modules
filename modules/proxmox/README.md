@@ -1,5 +1,7 @@
 # Proxmox — AgeniusDesk community module
 
+![Proxmox module in AgeniusDesk](assets/screenshot.png)
+
 Connect a Proxmox VE cluster and get a read-first control surface inside AgeniusDesk:
 nodes, VMs, and LXCs with live status and health, cluster-wide resource stats, plus
 **gated** power actions and provisioning (create / clone / delete) on guests.

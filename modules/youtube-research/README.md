@@ -1,5 +1,7 @@
 # YouTube Research
 
+![YouTube Research module in AgeniusDesk](assets/screenshot.png)
+
 Drop a YouTube link. The module transcribes it from captions, has your
 configured AI model write a structured breakdown (and an optional deep dive),
 and saves the artifacts into your AgeniusDesk notes vault under
