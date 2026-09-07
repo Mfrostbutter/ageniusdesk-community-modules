@@ -1,0 +1,114 @@
+{
+  "id": "tokenpulse",
+  "name": "TokenPulse",
+  "version": "0.1.0",
+  "min_app_version": "0.6.0",
+  "description": "AI quota and budget observability: plan/credit limits, credit balances, and monthly budget gauges across Anthropic, OpenAI, and OpenRouter, loudest-first. Companion to the Model Cost module. Holds no credentials: every provider call goes through the host-owned http.request bridge.",
+  "author": "Agenius AI Labs",
+  "author_url": "https://ageniusailabs.com",
+  "repo": "Mfrostbutter/ageniusdesk-community-modules",
+  "license": "MIT",
+  "routes_prefix": "/api/tokenpulse",
+  "homepage": "https://github.com/Mfrostbutter/ageniusdesk-community-modules/tree/main/modules/tokenpulse",
+  "capabilities": {
+    "network": {
+      "enabled": false,
+      "hosts": []
+    },
+    "filesystem": {
+      "write_paths": []
+    },
+    "subprocess": false,
+    "env": [],
+    "host": {
+      "http": {
+        "enabled": true,
+        "endpoints": [
+          {
+            "id": "anthropic",
+            "base_url": "https://api.anthropic.com",
+            "auth": {
+              "type": "header",
+              "header": "x-api-key",
+              "secret_ref": "ANTHROPIC_ADMIN_KEY",
+              "format": "{value}"
+            },
+            "methods": ["GET"],
+            "verify_tls": true
+          },
+          {
+            "id": "openai",
+            "base_url": "https://api.openai.com",
+            "auth": {
+              "type": "header",
+              "header": "Authorization",
+              "secret_ref": "OPENAI_ADMIN_KEY",
+              "format": "Bearer {value}"
+            },
+            "methods": ["GET"],
+            "verify_tls": true
+          },
+          {
+            "id": "openrouter",
+            "base_url": "https://openrouter.ai/api/v1",
+            "auth": {
+              "type": "header",
+              "header": "Authorization",
+              "secret_ref": "OPENROUTER_KEY",
+              "format": "Bearer {value}"
+            },
+            "methods": ["GET"],
+            "verify_tls": true
+          }
+        ]
+      }
+    }
+  },
+  "secrets_required": [
+    {
+      "key": "ANTHROPIC_ADMIN_KEY",
+      "description": "Anthropic Admin API key (sk-ant-admin...). Read-only org cost, for the monthly budget gauge. Leave unset to skip Anthropic.",
+      "required": false
+    },
+    {
+      "key": "OPENAI_ADMIN_KEY",
+      "description": "OpenAI Admin API key (sk-admin-...). Read-only org cost, for the monthly budget gauge. Leave unset to skip OpenAI.",
+      "required": false
+    },
+    {
+      "key": "OPENROUTER_KEY",
+      "description": "OpenRouter key. Gives key spend limit + remaining; a provisioning/management key also gives the account credit balance. Point this endpoint at your management key via Configure endpoint > Secret name. Leave unset to skip OpenRouter.",
+      "required": false
+    }
+  ],
+  "frontend": {
+    "nav": {
+      "label": "TokenPulse",
+      "icon": "gauge",
+      "view": "tokenpulse.html"
+    }
+  },
+  "routes": [
+    {
+      "pattern": "/api/tokenpulse/settings",
+      "methods": ["POST"],
+      "min_role": "operator"
+    },
+    {
+      "pattern": "/api/tokenpulse/refresh",
+      "methods": ["POST"],
+      "min_role": "operator"
+    }
+  ],
+  "contributes": {
+    "fleet_health": "fleet-health",
+    "dashboard_cards": [
+      {
+        "id": "quotas",
+        "title": "AI Quotas",
+        "size": "half",
+        "data": "card"
+      }
+    ]
+  }
+}
