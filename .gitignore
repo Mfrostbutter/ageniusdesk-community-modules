@@ -17,3 +17,6 @@ venv/
 .ruff_cache/
 dist/
 build/
+
+# Runtime artifacts from local module test runs
+data/

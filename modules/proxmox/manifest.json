@@ -81,5 +81,8 @@
       ],
       "min_role": "operator"
     }
-  ]
+  ],
+  "contributes": {
+    "fleet_health": "fleet-health"
+  }
 }
