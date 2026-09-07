@@ -39,15 +39,23 @@ Prices drift; edit `prices.py` to keep the estimate honest for your models.
    have to the encrypted secret store and grant the matching endpoints. Configure
    only the providers you use; the rest simply show as "not configured".
 
-   | Provider | Secret | Key type |
+   | Provider | Default secret name | Key type |
    |---|---|---|
    | Anthropic | `ANTHROPIC_ADMIN_KEY` | Admin API key (`sk-ant-admin...`). A plain `sk-ant-api` key cannot read org usage/cost. |
    | OpenAI | `OPENAI_ADMIN_KEY` | Admin API key (`sk-admin-...`). |
-   | OpenRouter | `OPENROUTER_KEY` | A provisioning/management key returns 30-day spend by model; an inference key returns only key-level limits. |
+   | OpenRouter | `OPENROUTER_KEY` | Use a **provisioning/management key** for account-wide 30-day spend by model; an inference key returns only key-level limits. |
 
-2. In the endpoint consent panel, confirm the base URLs and keep the endpoints
-   **read-only** (only `GET` is needed). The keys are read-only usage/cost
-   credentials; this module never writes to a provider.
+   **Choosing which key each provider uses.** The secret name above is only the
+   default. In **Configure endpoint ▸ Secret name** you can point any endpoint at
+   a different stored secret, so you can give OpenRouter a management key held
+   under its own name (e.g. `OPENROUTER_MANAGEMENT_KEY`) without disturbing an
+   inference key another module uses. The module defines the auth *shape*; you
+   choose *which* secret it resolves. The secret value stays host-side.
+
+2. In the endpoint consent panel, confirm the base URLs and (if you changed it)
+   the secret name, and keep the endpoints **read-only** (only `GET` is needed).
+   The keys are read-only usage/cost credentials; this module never writes to a
+   provider.
 
 3. Open Model Cost and **Refresh**. Data is cached for up to 5 minutes.
 
