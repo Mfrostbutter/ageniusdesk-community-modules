@@ -3,7 +3,7 @@
   "name": "TokenPulse",
   "version": "0.1.0",
   "min_app_version": "0.6.0",
-  "description": "AI quota and budget observability: plan/credit limits, credit balances, and monthly budget gauges across Anthropic, OpenAI, and OpenRouter, loudest-first. Companion to the Model Cost module. Holds no credentials: every provider call goes through the host-owned http.request bridge.",
+  "description": "AI cost and usage observability across Anthropic, OpenAI, and OpenRouter in one place: per-model spend, monthly budget gauges, credit balances, and key limits, with click-through provider detail. Holds no credentials: every provider call goes through the host-owned http.request bridge.",
   "author": "Agenius AI Labs",
   "author_url": "https://ageniusailabs.com",
   "repo": "Mfrostbutter/ageniusdesk-community-modules",
@@ -104,10 +104,16 @@
     "fleet_health": "fleet-health",
     "dashboard_cards": [
       {
+        "id": "spend",
+        "title": "AI Model Spend",
+        "size": "half",
+        "data": "card"
+      },
+      {
         "id": "quotas",
         "title": "AI Quotas",
         "size": "half",
-        "data": "card"
+        "data": "card-quotas"
       }
     ]
   }
