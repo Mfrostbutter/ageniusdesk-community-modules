@@ -1,0 +1,109 @@
+{
+  "id": "model-cost",
+  "name": "Model Cost",
+  "version": "0.1.0",
+  "min_app_version": "0.6.0",
+  "description": "Per-model AI cost observability across Anthropic, OpenAI, and OpenRouter. See which models are actually costing you, with tokens and spend by model. Holds no credentials: every provider call goes through the host-owned http.request bridge, and admin keys never enter module code.",
+  "author": "Agenius AI Labs",
+  "author_url": "https://ageniusailabs.com",
+  "repo": "Mfrostbutter/ageniusdesk-community-modules",
+  "license": "MIT",
+  "routes_prefix": "/api/model-cost",
+  "homepage": "https://github.com/Mfrostbutter/ageniusdesk-community-modules/tree/main/modules/model-cost",
+  "capabilities": {
+    "network": {
+      "enabled": false,
+      "hosts": []
+    },
+    "filesystem": {
+      "write_paths": []
+    },
+    "subprocess": false,
+    "env": [],
+    "host": {
+      "http": {
+        "enabled": true,
+        "endpoints": [
+          {
+            "id": "anthropic",
+            "base_url": "https://api.anthropic.com",
+            "auth": {
+              "type": "header",
+              "header": "x-api-key",
+              "secret_ref": "ANTHROPIC_ADMIN_KEY",
+              "format": "{value}"
+            },
+            "methods": ["GET"],
+            "verify_tls": true
+          },
+          {
+            "id": "openai",
+            "base_url": "https://api.openai.com",
+            "auth": {
+              "type": "header",
+              "header": "Authorization",
+              "secret_ref": "OPENAI_ADMIN_KEY",
+              "format": "Bearer {value}"
+            },
+            "methods": ["GET"],
+            "verify_tls": true
+          },
+          {
+            "id": "openrouter",
+            "base_url": "https://openrouter.ai/api/v1",
+            "auth": {
+              "type": "header",
+              "header": "Authorization",
+              "secret_ref": "OPENROUTER_KEY",
+              "format": "Bearer {value}"
+            },
+            "methods": ["GET"],
+            "verify_tls": true
+          }
+        ]
+      }
+    }
+  },
+  "secrets_required": [
+    {
+      "key": "ANTHROPIC_ADMIN_KEY",
+      "description": "Anthropic Admin API key (sk-ant-admin...). Read-only org usage + cost. A plain sk-ant-api key cannot read these. Leave unset to skip Anthropic.",
+      "required": false
+    },
+    {
+      "key": "OPENAI_ADMIN_KEY",
+      "description": "OpenAI Admin API key (sk-admin-...). Read-only org usage + cost. Leave unset to skip OpenAI.",
+      "required": false
+    },
+    {
+      "key": "OPENROUTER_KEY",
+      "description": "OpenRouter key. A provisioning/management key returns account-wide 30-day spend by model and credit balance; an inference key returns key-level limits only. Leave unset to skip OpenRouter.",
+      "required": false
+    }
+  ],
+  "frontend": {
+    "nav": {
+      "label": "Model Cost",
+      "icon": "bar-chart-2",
+      "view": "model-cost.html"
+    }
+  },
+  "routes": [
+    {
+      "pattern": "/api/model-cost/refresh",
+      "methods": ["POST"],
+      "min_role": "operator"
+    }
+  ],
+  "contributes": {
+    "fleet_health": "fleet-health",
+    "dashboard_cards": [
+      {
+        "id": "spend",
+        "title": "AI Model Spend",
+        "size": "half",
+        "data": "card"
+      }
+    ]
+  }
+}

@@ -1,0 +1,27 @@
+<div id="mc-root" style="padding:20px 24px;max-width:1200px;margin:0 auto">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:16px">
+    <div>
+      <h1 style="font-size:20px;font-weight:700;margin:0 0 4px">Model Cost</h1>
+      <p style="color:var(--text-secondary);font-size:13px;margin:0;max-width:720px">
+        Per-model spend and tokens across Anthropic, OpenAI, and OpenRouter. Cost is
+        actual where the provider reports it per model (OpenRouter); elsewhere it is
+        estimated from token counts and labelled, with each provider's real total shown
+        alongside. Admin keys stay host-side; nothing here holds a credential.
+      </p>
+    </div>
+    <button id="mc-refresh" type="button" class="btn" style="cursor:pointer;font-size:12px;padding:6px 12px;border:1px solid var(--border-dim);border-radius:var(--radius);background:var(--bg-panel);color:var(--text-secondary)">Refresh</button>
+  </div>
+
+  <div id="mc-unconfigured" style="display:none;background:#fbbf2418;border:1px solid #fbbf2455;color:#fbbf24;border-radius:var(--radius);padding:10px 14px;font-size:13px;margin-bottom:16px"></div>
+
+  <div id="mc-providers" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:20px"></div>
+
+  <div id="mc-tabs" style="display:flex;gap:6px;border-bottom:1px solid var(--border-dim);margin-bottom:14px">
+    <button class="mc-tab" data-win="mtd" type="button" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted,var(--text-secondary));padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer">Month to date</button>
+    <button class="mc-tab" data-win="today" type="button" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted,var(--text-secondary));padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer">Today</button>
+    <button class="mc-tab" data-win="30d" type="button" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted,var(--text-secondary));padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer">30 days (OpenRouter)</button>
+  </div>
+
+  <div id="mc-models"><div style="opacity:0.6;font-size:13px">Loading…</div></div>
+  <div id="mc-updated" style="font-size:11px;color:var(--text-secondary);margin-top:14px"></div>
+</div>
