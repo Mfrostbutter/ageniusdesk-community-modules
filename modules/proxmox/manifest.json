@@ -1,7 +1,7 @@
 {
   "id": "proxmox",
   "name": "Proxmox",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "min_app_version": "0.6.0",
   "description": "Connect a Proxmox VE cluster: read-first view of nodes, VMs, and LXCs with live status and health, plus gated start/stop/reboot and provisioning on guests. Holds no credentials and opens no direct connection: every Proxmox call goes through the host-owned http.request bridge.",
   "author": "Agenius AI Labs",
