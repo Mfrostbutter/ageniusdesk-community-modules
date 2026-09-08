@@ -175,15 +175,85 @@ def _model_rows(provider: str, name: str, per_model: dict, basis: str) -> list[d
     return rows
 
 
+def _anthropic_tok(result: dict) -> dict:
+    creation = result.get("cache_creation") or {}
+    cw = _num(creation.get("ephemeral_1h_input_tokens")) + _num(creation.get("ephemeral_5m_input_tokens"))
+    return {"input": _num(result.get("uncached_input_tokens")), "output": _num(result.get("output_tokens")),
+            "cache_read": _num(result.get("cache_read_input_tokens")), "cache_write": cw}
+
+
+def _openai_tok(result: dict) -> dict:
+    inp, cached = _num(result.get("input_tokens")), _num(result.get("input_cached_tokens"))
+    return {"input": max(inp - cached, 0.0), "output": _num(result.get("output_tokens")),
+            "cache_read": cached, "cache_write": 0.0}
+
+
+def _short_id(gid: Any) -> str:
+    s = str(gid or "")
+    return s if len(s) <= 14 else s[:6] + "…" + s[-6:]
+
+
+def _group(dim: str, gid: Any, name: str, spend: dict, cost: float, basis: str, models: list) -> dict:
+    return {"dim": dim, "id": str(gid), "name": name, "spend": spend,
+            "cost": round(cost, 6), "cost_basis": basis, "models": models}
+
+
+def _build_groups(dim: str, provider: str, pname: str, names: dict,
+                  cost_map: dict, usage_map: dict) -> list[dict]:
+    """Merge a group dimension: actual per-group cost (cost_map) where the
+    provider reports it, else an estimate from that group's per-model tokens.
+    Per-model rows are always estimated (the split is token-derived)."""
+    out = []
+    for gid in set(cost_map) | set(usage_map):
+        per_model = {(m, "mtd"): tok for m, tok in (usage_map.get(gid) or {}).items()}
+        models = _model_rows(provider, pname, per_model, "estimated")
+        if gid in cost_map:
+            cost, basis = round(cost_map[gid]["mtd"], 6), "actual"
+            spend = {"mtd": cost, "today": round(cost_map[gid].get("today", 0.0), 6)}
+        else:
+            cost, basis = round(sum(m["cost"] for m in models), 6), "estimated"
+            spend = {"mtd": cost}
+        if cost <= 0 and not models:
+            continue
+        name = names.get(str(gid)) or names.get(gid) or _short_id(gid)
+        out.append(_group(dim, gid, name, spend, cost, basis, models))
+    out.sort(key=lambda g: g["cost"], reverse=True)
+    return out
+
+
+async def _safe_names(endpoint: str, path: str, headers: dict | None = None) -> dict:
+    """Best-effort id -> display name map from a provider's admin list endpoint."""
+    try:
+        rows = await _paged(endpoint, path, {"limit": 100}, headers)
+    except (ProviderError, _host.HostError):
+        return {}
+    out: dict = {}
+    for r in rows:
+        rid = r.get("id")
+        if rid:
+            out[str(rid)] = str(r.get("name") or r.get("display_name") or rid)[:60]
+    return out
+
+
+async def _groups_safe(coro) -> tuple[list, dict]:
+    """A group dimension is a bonus, never fatal: any failure yields no dims."""
+    try:
+        return await coro
+    except Exception:  # noqa: BLE001
+        return [], {}
+
+
 def _provider(provider: str, *, reachable: bool, error: str | None = None, configured: bool = True,
               spend: dict | None = None, credits: dict | None = None,
               quotas: list | None = None, models: list | None = None,
-              trend: list | None = None, **extra) -> dict:
+              trend: list | None = None, group_dims: list | None = None,
+              groups: dict | None = None, **extra) -> dict:
     out = {
         "id": provider, "name": _NAMES[provider], "reachable": reachable, "error": error,
         "configured": configured, "currency": "USD", "spend": spend or {},
         "credits": credits, "quotas": quotas or [], "models": models or [],
         "trend": trend or [], "budget": 0.0,
+        "group_dims": group_dims or [], "groups": groups or {},
     }
     out.update(extra)
     return out
@@ -248,9 +318,67 @@ async def _poll_anthropic(budget: float) -> dict:
     if budget > 0:
         quotas.append(_quota(scope="monthly", provider="anthropic", label="Anthropic budget",
                              used=mtd, limit=budget, unit="usd", basis="budget", resets_at=_next_month_epoch()))
+    group_dims, groups = await _groups_safe(_anthropic_groups(headers, month_start, today_key))
     return _provider("anthropic", reachable=True, spend={"today": round(today, 6), "mtd": round(mtd, 6)},
                      quotas=quotas, models=_model_rows("anthropic", "Anthropic", per_model, "estimated"),
-                     trend=[{"date": d, "amount": round(v, 6)} for d, v in sorted(trend.items())])
+                     trend=[{"date": d, "amount": round(v, 6)} for d, v in sorted(trend.items())],
+                     group_dims=group_dims, groups=groups)
+
+
+async def _anthropic_grouped_cost(headers: dict, month_start: dt.datetime, today_key: str, field: str) -> dict:
+    buckets = await _paged("anthropic", "/v1/organizations/cost_report", {
+        "starting_at": _rfc3339(month_start), "bucket_width": "1d", "limit": 31, "group_by[]": [field]}, headers)
+    out: dict = {}
+    for bucket in buckets:
+        day = str(bucket.get("starting_at", ""))[:10]
+        for r in bucket.get("results", []):
+            if not isinstance(r, dict):
+                continue
+            gid = r.get(field) or "untagged"
+            amt = _num(r.get("amount")) / 100.0
+            g = out.setdefault(gid, {"mtd": 0.0, "today": 0.0})
+            g["mtd"] += amt
+            if day == today_key:
+                g["today"] += amt
+    return out
+
+
+async def _anthropic_grouped_usage(headers: dict, month_start: dt.datetime, field: str) -> dict:
+    buckets = await _paged("anthropic", "/v1/organizations/usage_report/messages", {
+        "starting_at": _rfc3339(month_start), "bucket_width": "1d", "limit": 31,
+        "group_by[]": [field, "model"]}, headers)
+    per: dict = {}
+    for bucket in buckets:
+        for r in bucket.get("results", []):
+            if not isinstance(r, dict):
+                continue
+            model, gid = r.get("model"), (r.get(field) or "untagged")
+            if not model:
+                continue
+            t = _anthropic_tok(r)
+            d = per.setdefault(gid, {}).setdefault(model, {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write": 0.0})
+            for k in t:
+                d[k] += t[k]
+    return per
+
+
+async def _anthropic_groups(headers: dict, month_start: dt.datetime, today_key: str) -> tuple[list, dict]:
+    dims: list = []
+    groups: dict = {}
+    ws_names = await _safe_names("anthropic", "/v1/organizations/workspaces", headers)
+    ws_cost = await _anthropic_grouped_cost(headers, month_start, today_key, "workspace_id")
+    ws_usage = await _anthropic_grouped_usage(headers, month_start, "workspace_id")
+    ws = _build_groups("workspace", "anthropic", "Anthropic", ws_names, ws_cost, ws_usage)
+    if ws:
+        dims.append({"key": "workspace", "label": "Workspaces", "basis": "actual"})
+        groups["workspace"] = ws
+    key_names = await _safe_names("anthropic", "/v1/organizations/api_keys", headers)
+    key_usage = await _anthropic_grouped_usage(headers, month_start, "api_key_id")
+    keys = _build_groups("api_key", "anthropic", "Anthropic", key_names, {}, key_usage)
+    if keys:
+        dims.append({"key": "api_key", "label": "API keys", "basis": "estimated"})
+        groups["api_key"] = keys
+    return dims, groups
 
 
 async def _poll_openai(budget: float) -> dict:
@@ -297,9 +425,65 @@ async def _poll_openai(budget: float) -> dict:
     if budget > 0:
         quotas.append(_quota(scope="monthly", provider="openai", label="OpenAI budget",
                              used=mtd, limit=budget, unit="usd", basis="budget", resets_at=_next_month_epoch()))
+    group_dims, groups = await _groups_safe(_openai_groups(month_start, today_start))
     return _provider("openai", reachable=True, spend={"today": round(today, 6), "mtd": round(mtd, 6)},
                      quotas=quotas, models=_model_rows("openai", "OpenAI", per_model, "estimated"),
-                     trend=[{"date": d, "amount": round(v, 6)} for d, v in sorted(trend.items())])
+                     trend=[{"date": d, "amount": round(v, 6)} for d, v in sorted(trend.items())],
+                     group_dims=group_dims, groups=groups)
+
+
+async def _openai_grouped_cost(month_start: int, today_start: int, field: str) -> dict:
+    buckets = await _paged("openai", "/v1/organization/costs", {
+        "start_time": month_start, "bucket_width": "1d", "limit": 31, "group_by[]": [field]})
+    out: dict = {}
+    for bucket in buckets:
+        bs = int(_num(bucket.get("start_time")))
+        for r in bucket.get("results", []):
+            if not isinstance(r, dict):
+                continue
+            gid = r.get(field) or "untagged"
+            val = _num((r.get("amount") or {}).get("value"))
+            g = out.setdefault(gid, {"mtd": 0.0, "today": 0.0})
+            g["mtd"] += val
+            if bs >= today_start:
+                g["today"] += val
+    return out
+
+
+async def _openai_grouped_usage(month_start: int, field: str) -> dict:
+    buckets = await _paged("openai", "/v1/organization/usage/completions", {
+        "start_time": month_start, "bucket_width": "1d", "limit": 31, "group_by[]": [field, "model"]})
+    per: dict = {}
+    for bucket in buckets:
+        for r in bucket.get("results", []):
+            if not isinstance(r, dict):
+                continue
+            model, gid = r.get("model"), (r.get(field) or "untagged")
+            if not model:
+                continue
+            t = _openai_tok(r)
+            d = per.setdefault(gid, {}).setdefault(model, {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write": 0.0})
+            for k in t:
+                d[k] += t[k]
+    return per
+
+
+async def _openai_groups(month_start: int, today_start: int) -> tuple[list, dict]:
+    dims: list = []
+    groups: dict = {}
+    proj_names = await _safe_names("openai", "/v1/organization/projects")
+    proj_cost = await _openai_grouped_cost(month_start, today_start, "project_id")
+    proj_usage = await _openai_grouped_usage(month_start, "project_id")
+    proj = _build_groups("project", "openai", "OpenAI", proj_names, proj_cost, proj_usage)
+    if proj:
+        dims.append({"key": "project", "label": "Projects", "basis": "actual"})
+        groups["project"] = proj
+    key_usage = await _openai_grouped_usage(month_start, "api_key_id")
+    keys = _build_groups("api_key", "openai", "OpenAI", {}, {}, key_usage)
+    if keys:
+        dims.append({"key": "api_key", "label": "API keys", "basis": "estimated"})
+        groups["api_key"] = keys
+    return dims, groups
 
 
 async def _poll_openrouter(budget: float) -> dict:
@@ -368,8 +552,31 @@ async def _poll_openrouter(budget: float) -> dict:
     if budget > 0:
         quotas.append(_quota(scope="monthly", provider="openrouter", label="OpenRouter budget",
                              used=usage_month, limit=budget, unit="usd", basis="budget", resets_at=_next_month_epoch()))
+    group_dims, groups = await _groups_safe(_openrouter_groups())
     return _provider("openrouter", reachable=True, spend=spend, credits=credits, quotas=quotas,
-                     models=models, trend=[], label=str(data.get("label") or "")[:40])
+                     models=models, trend=[], label=str(data.get("label") or "")[:40],
+                     group_dims=group_dims, groups=groups)
+
+
+async def _openrouter_groups() -> tuple[list, dict]:
+    """Per-key actual spend, via a provisioning/management key's /keys listing.
+    Lifetime usage vs the key's limit (not monthly); no per-model split here."""
+    payload = await _get_json("openrouter", "/keys", {"limit": 100})
+    rows = payload.get("data") if isinstance(payload, dict) else payload
+    if not isinstance(rows, list) or not rows:
+        return [], {}
+    out: list = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        name = str(r.get("name") or r.get("label") or _short_id(r.get("hash")) or "key")[:60]
+        used, limit = _num(r.get("usage")), _num(r.get("limit"))
+        g = _group("key", r.get("hash") or name, name, {"usage": round(used, 6)}, used, "actual", [])
+        g["limit"] = round(limit, 6) if limit > 0 else None
+        g["disabled"] = bool(r.get("disabled"))
+        out.append(g)
+    out.sort(key=lambda x: x["cost"], reverse=True)
+    return [{"key": "key", "label": "API keys", "basis": "actual"}], {"key": out}
 
 
 _POLLERS = {"anthropic": _poll_anthropic, "openai": _poll_openai, "openrouter": _poll_openrouter}

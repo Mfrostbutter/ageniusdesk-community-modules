@@ -1,42 +1,51 @@
 # TokenPulse
 
-AI **quota and budget** observability for AgeniusDesk: how close you are to a
-spend limit, credit balances, and monthly budget gauges across Anthropic, OpenAI,
-and OpenRouter, loudest first. The companion to the **Model Cost** module (which
-breaks spend down per model) — this one answers "how close am I to a limit".
+AI **cost and usage** observability for AgeniusDesk in one place: per-model spend,
+monthly budget gauges, credit balances, and key limits across Anthropic, OpenAI,
+and OpenRouter, with click-through provider detail and a per-project / per-key
+cost breakdown.
 
 The module holds no credentials: every provider call goes through the host-owned
 `http.request` bridge, so your admin keys stay host-side, in every isolation mode.
 
 ## What you get
 
-- **Own view** (sidebar ▸ TokenPulse): quota gauges (budget vs actual, OpenRouter
-  key limit, OpenRouter credit balance) sorted loudest first with reset
-  countdowns, a per-provider spend strip, and a per-day monthly spend trend.
-- **Main Dashboard card**: pin "AI Quotas" from **+ Widget** — the tightest quota
-  up top, the next few below, with a link into the view.
-- **Fleet Health row**: an "AI Quotas" row that turns amber past 75% and red past
+- **Own view** (sidebar ▸ TokenPulse): spend totals, quota gauges (budget vs
+  actual, OpenRouter key limit and credit balance) loudest first, provider tiles,
+  and a monthly spend trend. Click a provider tile to drill into its spend
+  windows, quotas, cost-by-model table, daily trend, and breakdown.
+- **Main Dashboard cards**: pin "AI Model Spend" and "AI Quotas" from **+ Widget**.
+- **Fleet Health row**: an "AI Usage" row that turns amber past 75% and red past
   90% of the tightest quota.
 
-## Quotas it shows
+## Per-project / per-key breakdown
 
-| Quota | Source | Notes |
+Inside a provider's detail view, a **Breakdown** section splits that provider's
+cost by tenant. A toggle picks the dimension; a sub-tile drills into that group's
+cost-by-model table.
+
+| Provider | Dimensions | Cost basis |
 |---|---|---|
-| Monthly budget | Your budget vs actual MTD cost | Set a budget per provider in **Budgets**; the actual comes from the org cost API (Anthropic/OpenAI) or key usage (OpenRouter). |
-| OpenRouter key limit | `/key` `limit` / `limit_remaining` | The spend cap on the key itself. |
-| OpenRouter credits | `/credits` balance | Account credit balance; needs a provisioning/management key. |
+| Anthropic | Workspaces, API keys | Workspace total is **actual** (org cost API grouped by workspace); API-key total is **estimated** (tokens × price table). The per-model split is always estimated. |
+| OpenAI | Projects, API keys | Project total is **actual** (org cost API grouped by project); API-key total is **estimated**. |
+| OpenRouter | API keys | **Actual** lifetime usage vs each key's limit, enumerated with a provisioning/management key. |
+
+You do **not** need to add a separate API key per tenant: the admin key's own
+grouping produces the breakdown. Groups are a bonus — if a grouping call is not
+permitted (or the endpoint is unavailable), the provider still renders and the
+toggle is simply absent.
 
 ## Setup
 
 1. Install the module, then add the admin keys you have to the encrypted secret
-   store and grant the matching endpoints (Settings ▸ Modules). Same keys as the
-   Model Cost module; configure only the providers you use.
+   store and grant the matching endpoints (Settings ▸ Modules). Configure only the
+   providers you use.
 
    | Provider | Default secret name | Key type |
    |---|---|---|
-   | Anthropic | `ANTHROPIC_ADMIN_KEY` | Admin API key (`sk-ant-admin...`), read-only cost. |
-   | OpenAI | `OPENAI_ADMIN_KEY` | Admin API key (`sk-admin-...`), read-only cost. |
-   | OpenRouter | `OPENROUTER_KEY` | Key spend limit works with any key; the credit balance needs a **provisioning/management** key. |
+   | Anthropic | `ANTHROPIC_ADMIN_KEY` | Admin API key (`sk-ant-admin...`), read-only cost + usage. |
+   | OpenAI | `OPENAI_ADMIN_KEY` | Admin API key (`sk-admin-...`), read-only cost + usage. |
+   | OpenRouter | `OPENROUTER_KEY` | Key spend limit works with any key; the credit balance, per-model spend, and per-key breakdown need a **provisioning/management** key. |
 
    The default secret name is only a default — use **Configure endpoint ▸ Secret
    name** to point any endpoint at a different stored secret (e.g. give OpenRouter
@@ -48,11 +57,20 @@ The module holds no credentials: every provider call goes through the host-owned
 3. Open TokenPulse, set a **monthly budget** per provider, and **Refresh**. Data
    is cached for up to 5 minutes.
 
-## Endpoints (all read-only)
+## Cost honesty
 
-- Anthropic: `GET /v1/organizations/cost_report`
-- OpenAI: `GET /v1/organization/costs`
-- OpenRouter: `GET /key`, `GET /credits`
+OpenRouter per-model spend (`/activity`) is **actual**. Anthropic and OpenAI
+expose per-model tokens but total-only cost, so per-model cost there is derived
+from tokens × the built-in price table and labelled **est**, with each provider's
+actual total shown alongside. A model with no price on file shows **unpriced**.
+
+## Endpoints (all read-only, `GET`)
+
+- Anthropic: `/v1/organizations/cost_report`, `/v1/organizations/usage_report/messages`,
+  `/v1/organizations/workspaces`, `/v1/organizations/api_keys`
+- OpenAI: `/v1/organization/costs`, `/v1/organization/usage/completions`,
+  `/v1/organization/projects`
+- OpenRouter: `/key`, `/credits`, `/activity`, `/keys`
 
 ## Requirements
 

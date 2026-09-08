@@ -12,6 +12,8 @@ const API = '/api/tokenpulse';
 let _data = null;
 let _detail = null;      // provider id currently drilled into, or null
 let _modelWin = {};      // per-provider selected model-table window
+let _groupDim = {};      // per-provider selected breakdown dimension (workspace/project/api_key/key)
+let _groupOpen = {};     // per (provider|dim) expanded group id, or null
 
 function af(path, opts) {
   const f = (window.AgeniusDesk && window.AgeniusDesk.fetch) || window.fetch;
@@ -108,6 +110,46 @@ function trendBars(trend) {
     `</div>`;
 }
 
+function groupWinLabel(g) {
+  if (g.spend && g.spend.usage != null) return 'lifetime';
+  return 'this month';
+}
+
+function groupTile(g, open) {
+  const clickable = (g.models || []).length > 0;
+  const badge = g.cost_basis === 'actual'
+    ? `<span style="font-size:10px;color:#34d399">actual</span>`
+    : `<span style="font-size:10px;color:var(--text-secondary)" title="split derived from tokens">est</span>`;
+  const limit = g.limit != null
+    ? `<div style="font-size:11px;color:var(--text-secondary)">of ${usd(g.limit)} limit${g.disabled ? ' · disabled' : ''}</div>`
+    : `<div style="font-size:11px;color:var(--text-secondary)">${esc(groupWinLabel(g))}${(g.models || []).length ? ` · ${g.models.length} models` : ''}</div>`;
+  const arrow = clickable ? `<div style="font-size:11px;color:var(--accent,#60a5fa);margin-top:6px">${open ? 'hide models ▲' : 'show models ▼'}</div>` : '';
+  const edge = open ? 'var(--accent,#60a5fa)' : 'transparent';
+  return `<div class="tp-gtile" ${clickable ? `data-gid="${esc(g.id)}" role="button" tabindex="0"` : ''} style="background:var(--bg-panel);border:1px solid var(--border-dim);border-left:3px solid ${edge};border-radius:var(--radius);padding:12px;${clickable ? 'cursor:pointer' : ''}">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><strong style="font-size:13px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(g.name)}">${esc(g.name)}</strong>${badge}</div>
+    <div style="font-size:19px;font-weight:700;margin-top:4px">${usd(g.cost)}</div>${limit}${arrow}</div>`;
+}
+
+function groupBreakdown(p, pid) {
+  const dims = p.group_dims || [];
+  if (!dims.length) return '';
+  const curDim = _groupDim[pid] && dims.some(d => d.key === _groupDim[pid]) ? _groupDim[pid] : dims[0].key;
+  _groupDim[pid] = curDim;
+  const groups = (p.groups || {})[curDim] || [];
+  const openId = _groupOpen[pid + '|' + curDim];
+  const tabs = dims.length > 1 ? `<div style="display:flex;gap:6px;margin-bottom:10px">` + dims.map(d =>
+    `<button class="tp-gdim" data-gdim="${esc(d.key)}" type="button" style="background:${d.key === curDim ? 'var(--accent,#60a5fa)' : 'var(--bg-panel)'};color:${d.key === curDim ? '#fff' : 'var(--text-secondary)'};border:1px solid var(--border-dim);border-radius:var(--radius);font-size:12px;padding:4px 10px;cursor:pointer">${esc(d.label)}</button>`).join('') + `</div>` : '';
+  const curLabel = (dims.find(d => d.key === curDim) || {}).label || '';
+  const tiles = groups.length
+    ? `<div class="tp-gtiles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">${groups.map(g => groupTile(g, g.id === openId)).join('')}</div>`
+    : `<div style="opacity:0.6;font-size:13px;padding:6px 0">No ${esc(curLabel.toLowerCase())} reported for this window.</div>`;
+  const open = groups.find(g => g.id === openId);
+  const openModels = open && (open.models || []).length
+    ? `<div style="margin-top:12px"><div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">${esc(open.name)} · cost by model <span style="opacity:0.7">(estimated split)</span></div>${modelTable(open.models, 'mtd')}</div>`
+    : '';
+  return `<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;opacity:0.5;margin:20px 0 8px">Breakdown</div>${tabs}${tiles}${openModels}`;
+}
+
 // ── overview ──────────────────────────────────────────────────────────────────
 
 function providerTile(p) {
@@ -190,7 +232,8 @@ function renderDetail(pid) {
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">${spendCells || '<div style="opacity:0.6;font-size:13px">No spend windows reported.</div>'}</div>
     ${quotas ? `<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;opacity:0.5;margin-bottom:8px">Quotas</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-bottom:20px">${quotas}</div>` : ''}
-    <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;opacity:0.5;margin-bottom:8px">Cost by model</div>
+    ${groupBreakdown(p, pid)}
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;opacity:0.5;margin:20px 0 8px">Cost by model</div>
     ${tabs}
     <div id="tp-detail-models">${modelTable(p.models || [], cur)}</div>
     ${(p.trend || []).length ? `<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;opacity:0.5;margin:18px 0 8px">Spend this month, per day</div>${trendBars(p.trend)}` : ''}
@@ -201,6 +244,19 @@ function renderDetail(pid) {
     $('tp-detail-models').innerHTML = modelTable(p.models || [], b.dataset.win);
     renderDetail(pid); // repaint tabs active state
   }));
+  el.querySelectorAll('.tp-gdim').forEach(b => b.addEventListener('click', () => {
+    _groupDim[pid] = b.dataset.gdim;
+    renderDetail(pid);
+  }));
+  el.querySelectorAll('.tp-gtile[data-gid]').forEach(t => {
+    const toggle = () => {
+      const k = pid + '|' + _groupDim[pid];
+      _groupOpen[k] = _groupOpen[k] === t.dataset.gid ? null : t.dataset.gid;
+      renderDetail(pid);
+    };
+    t.addEventListener('click', toggle);
+    t.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  });
 }
 
 function showDetail(pid) { _detail = pid; $('tp-overview').style.display = 'none'; $('tp-detail').style.display = 'block'; renderDetail(pid); }
