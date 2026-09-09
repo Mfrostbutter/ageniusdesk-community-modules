@@ -160,15 +160,20 @@ def _quota(*, scope: str, provider: str, label: str, used: float, limit: float,
     }
 
 
+def _zero_tok() -> dict:
+    return {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write_5m": 0.0, "cache_write_1h": 0.0}
+
+
 def _model_rows(provider: str, name: str, per_model: dict, basis: str) -> list[dict]:
     rows = []
     for (model, window), tok in per_model.items():
-        total = tok["input"] + tok["output"] + tok["cache_read"] + tok["cache_write"]
+        cache = tok.get("cache_read", 0.0) + tok.get("cache_write_5m", 0.0) + tok.get("cache_write_1h", 0.0)
+        total = tok.get("input", 0.0) + tok.get("output", 0.0) + cache
         cost = estimate_cost(model, tok)
         rows.append({
             "source": provider, "source_name": name, "model": model, "window": window,
-            "input_tokens": tok["input"], "output_tokens": tok["output"],
-            "cache_tokens": tok["cache_read"] + tok["cache_write"], "tokens": total,
+            "input_tokens": tok.get("input", 0.0), "output_tokens": tok.get("output", 0.0),
+            "cache_tokens": cache, "tokens": total,
             "cost": cost if cost is not None else 0.0,
             "cost_basis": basis if cost is not None else "unpriced", "currency": "USD",
         })
@@ -177,15 +182,16 @@ def _model_rows(provider: str, name: str, per_model: dict, basis: str) -> list[d
 
 def _anthropic_tok(result: dict) -> dict:
     creation = result.get("cache_creation") or {}
-    cw = _num(creation.get("ephemeral_1h_input_tokens")) + _num(creation.get("ephemeral_5m_input_tokens"))
     return {"input": _num(result.get("uncached_input_tokens")), "output": _num(result.get("output_tokens")),
-            "cache_read": _num(result.get("cache_read_input_tokens")), "cache_write": cw}
+            "cache_read": _num(result.get("cache_read_input_tokens")),
+            "cache_write_5m": _num(creation.get("ephemeral_5m_input_tokens")),
+            "cache_write_1h": _num(creation.get("ephemeral_1h_input_tokens"))}
 
 
 def _openai_tok(result: dict) -> dict:
     inp, cached = _num(result.get("input_tokens")), _num(result.get("input_cached_tokens"))
     return {"input": max(inp - cached, 0.0), "output": _num(result.get("output_tokens")),
-            "cache_read": cached, "cache_write": 0.0}
+            "cache_read": cached, "cache_write_5m": 0.0, "cache_write_1h": 0.0}
 
 
 def _short_id(gid: Any) -> str:
@@ -303,16 +309,11 @@ async def _poll_anthropic(budget: float) -> dict:
             model = result.get("model")
             if not model:
                 continue
-            creation = result.get("cache_creation") or {}
-            cw = _num(creation.get("ephemeral_1h_input_tokens")) + _num(creation.get("ephemeral_5m_input_tokens"))
-            inp, out = _num(result.get("uncached_input_tokens")), _num(result.get("output_tokens"))
-            cr = _num(result.get("cache_read_input_tokens"))
+            t = _anthropic_tok(result)
             for w in windows:
-                d = per_model.setdefault((model, w), {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write": 0.0})
-                d["input"] += inp
-                d["output"] += out
-                d["cache_read"] += cr
-                d["cache_write"] += cw
+                d = per_model.setdefault((model, w), _zero_tok())
+                for k in t:
+                    d[k] += t[k]
 
     quotas = []
     if budget > 0:
@@ -356,7 +357,7 @@ async def _anthropic_grouped_usage(headers: dict, month_start: dt.datetime, fiel
             if not model:
                 continue
             t = _anthropic_tok(r)
-            d = per.setdefault(gid, {}).setdefault(model, {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write": 0.0})
+            d = per.setdefault(gid, {}).setdefault(model, _zero_tok())
             for k in t:
                 d[k] += t[k]
     return per
@@ -413,13 +414,11 @@ async def _poll_openai(budget: float) -> dict:
             model = result.get("model")
             if not model:
                 continue
-            inp, out = _num(result.get("input_tokens")), _num(result.get("output_tokens"))
-            cached = _num(result.get("input_cached_tokens"))
+            t = _openai_tok(result)  # input_tokens includes cached; _openai_tok nets it out
             for w in windows:
-                d = per_model.setdefault((model, w), {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write": 0.0})
-                d["input"] += max(inp - cached, 0.0)  # input_tokens includes cached
-                d["output"] += out
-                d["cache_read"] += cached
+                d = per_model.setdefault((model, w), _zero_tok())
+                for k in t:
+                    d[k] += t[k]
 
     quotas = []
     if budget > 0:
@@ -462,7 +461,7 @@ async def _openai_grouped_usage(month_start: int, field: str) -> dict:
             if not model:
                 continue
             t = _openai_tok(r)
-            d = per.setdefault(gid, {}).setdefault(model, {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write": 0.0})
+            d = per.setdefault(gid, {}).setdefault(model, _zero_tok())
             for k in t:
                 d[k] += t[k]
     return per

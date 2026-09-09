@@ -64,6 +64,12 @@ expose per-model tokens but total-only cost, so per-model cost there is derived
 from tokens × the built-in price table and labelled **est**, with each provider's
 actual total shown alongside. A model with no price on file shows **unpriced**.
 
+The price table (`prices.py`) is cache-aware: cache reads and 5-minute vs 1-hour
+cache writes are priced at their own rates, and each Claude/GPT generation has its
+own entry (Opus 5, Sonnet 5, Haiku 4.5, GPT-5 family, etc.). Prices were verified
+against the public price pages on 2026-09-09; they drift, so treat the estimate as
+a signal, not an invoice, and edit `prices.py` to correct or extend it.
+
 ## Endpoints (all read-only, `GET`)
 
 - Anthropic: `/v1/organizations/cost_report`, `/v1/organizations/usage_report/messages`,
